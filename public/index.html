@@ -3,39 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
 <title>Orchestra Board</title>
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div class="app no-ins" id="app">
   <header class="topbar">
-    <button class="btn ghost icon menu-btn" id="menuBtn" aria-label="Menu"><svg class="i"><use href="#i-menu"/></svg></button>
-    <div class="brand"><div class="mark"></div>Orchestra Board</div>
+    <button class="btn ghost icon menu-btn" id="menuBtn" aria-label="Sessions and agents" aria-expanded="false" aria-controls="sidebar"><svg class="i" aria-hidden="true"><use href="#i-menu"/></svg></button>
+    <button class="brand" id="homeBtn" aria-label="Orchestra Board home"><span class="mark" aria-hidden="true"></span><span class="txt">Orchestra Board</span></button>
     <div class="project" id="project"></div>
     <div class="meters" id="meters"></div>
-    <div class="conn" id="conn"><span class="dot"></span><span>Connecting</span></div>
-    <button class="btn ghost icon" id="insBtn" title="Workflow panel" aria-label="Workflow panel"><svg class="i"><use href="#i-flow"/></svg></button>
-    <button class="btn ghost icon" id="settingsBtn" title="Settings" aria-label="Settings"><svg class="i"><use href="#i-gear"/></svg></button>
+    <div class="conn" id="conn" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span class="txt">Connecting</span></div>
+    <button class="btn ghost icon" id="helpBtn" title="Help and keyboard shortcuts (?)" aria-label="Help and keyboard shortcuts"><svg class="i" aria-hidden="true"><use href="#i-help"/></svg></button>
+    <button class="btn ghost icon" id="insBtn" title="Workflow panel" aria-label="Workflow panel" aria-expanded="false" aria-controls="inspector"><svg class="i" aria-hidden="true"><use href="#i-flow"/></svg></button>
+    <button class="btn ghost icon" id="settingsBtn" title="Settings" aria-label="Settings"><svg class="i" aria-hidden="true"><use href="#i-gear"/></svg></button>
   </header>
 
-  <aside class="sidebar" id="sidebar">
-    <div class="side-top"><button class="btn primary" id="newBtn"><svg class="i"><use href="#i-plus"/></svg>New session <kbd style="margin-left:auto;background:transparent;color:inherit;border-color:currentColor;opacity:.6">Ctrl K</kbd></button></div>
+  <nav class="sidebar" id="sidebar" aria-label="Sessions and agents">
+    <div class="side-top"><button class="btn primary" id="newBtn"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>New session <kbd class="kbd-inline" id="newKbd" aria-hidden="true">Ctrl K</kbd></button></div>
     <div class="side-scroll">
-      <div class="side-h">Sessions</div>
-      <div id="sessions"></div>
-      <div class="side-h">Agents <button class="btn ghost sm icon" id="addAgent" title="Add agent" aria-label="Add agent" style="width:22px;height:22px"><svg class="i" style="width:14px;height:14px"><use href="#i-plus"/></svg></button></div>
-      <div id="agents"></div>
+      <h2 class="side-h" id="sessionsH">Sessions</h2>
+      <div id="sessions" role="list" aria-labelledby="sessionsH"></div>
+      <h2 class="side-h" id="agentsH">Agents <button class="btn ghost sm icon tiny" id="addAgent" title="Add agent" aria-label="Add agent"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button></h2>
+      <div id="agents" role="list" aria-labelledby="agentsH"></div>
     </div>
-  </aside>
+  </nav>
 
-  <main class="main" id="main"></main>
+  <div class="side-scrim" id="sideScrim" aria-hidden="true"></div>
+  <main class="main" id="main" tabindex="-1"></main>
 
-  <aside class="inspector" id="inspector"></aside>
+  <aside class="inspector" id="inspector" aria-label="Workflow and usage"></aside>
 </div>
-<div class="toasts" id="toasts"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<div class="sr-only" id="live" aria-live="polite" aria-atomic="true"></div>
 <div id="overlay"></div>
 
-<svg width="0" height="0" style="position:absolute">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
   <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
   <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
   <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
@@ -51,6 +57,12 @@
   <symbol id="i-skip" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></symbol>
   <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
 </svg>
 
 <script src="/app.js"></script>

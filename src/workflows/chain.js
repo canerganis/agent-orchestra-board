@@ -13,7 +13,7 @@ function createChain({ store, seats, rooms, broadcast }) {
     const { task, builderId, reviewerId, maxRounds, escalate } = room;
     const builder = seatById(builderId), reviewer = seatById(reviewerId);
     const ctx = room.withContext ? buildContext() : '';
-    let effort = builder.effort, feedback = null, passed = false;
+    let effort = builder.effort, feedback = null, passed = false, builderFailed = false;
     for (let r = 1; r <= maxRounds && !room.stopped; r++) {
       room.round = r; pushRoom(room);
       // A read-only builder proposes (v0.1 default); only a write seat edits files.
@@ -27,7 +27,8 @@ function createChain({ store, seats, rooms, broadcast }) {
         ? `Task:\n${task}${ctx}${noteText}\n\n${doIt}`
         : `Review feedback from ${reviewer.name} (round ${r - 1}):\n${feedback}${noteText}\n\nAddress the BLOCKER and SHOULD-FIX items only, then summarize.`, { round: r, effort, label: `${propose ? 'proposal' : 'implementation'} · ${effort}` });
       if (room.stopped) break;
-      if (!b.ok) { sys(room, `${builder.name} failed: ${b.error}`); break; }
+      // A builder that cannot run (missing CLI, crash) is an error, not a review that ran out of rounds.
+      if (!b.ok) { builderFailed = true; sys(room, `${builder.name} failed: ${b.error}`); break; }
       const diff = propose ? '' : gitDiff(resolveTarget(builder, store.project).cwd);
       // Notes posted while the builder worked go to the reviewer.
       const rNotes = room.messages.filter((m) => m.seatId === 'user' && !m.consumed && m !== room.messages[0]);
@@ -47,8 +48,9 @@ function createChain({ store, seats, rooms, broadcast }) {
       feedback = rv.text;
       if (escalate && r < maxRounds) { const next = bump(builder.agent, effort); if (next !== effort) { effort = next; sys(room, `⚡ ${builder.name} effort raised → ${effort}`); } }
     }
-    room.status = room.stopped ? 'stopped' : passed ? 'passed' : 'needs-you';
+    room.status = room.stopped ? 'stopped' : passed ? 'passed' : builderFailed ? 'error' : 'needs-you';
     if (room.status === 'needs-you') sys(room, 'Round limit reached without a PASS. Use "Run again" to retry, or "Continue in Direct chat" to settle it with one agent.');
+    if (room.status === 'error') sys(room, `${builder.name} could not complete a turn, so there was nothing to review. Fix the cause shown above (see the setup check), then use "Run again".`);
     room.messages.filter((m) => m.seatId === 'user' && !m.consumed && m !== room.messages[0]).forEach((m) => sys(room, NOT_DELIVERED(m)));
     pushRoom(room);
     store.appendLog('board', `Propose→Review ${builder.name}→${reviewer.name} "${task.slice(0, 80)}": ${room.status} after ${room.round} round(s).`);

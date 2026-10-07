@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/0000can0000/orchestra-board/security/advisories/new
+    about: Report privately via GitHub security advisories (see SECURITY.md); do not open a public issue.

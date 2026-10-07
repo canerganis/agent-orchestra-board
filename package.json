@@ -1,8 +1,24 @@
 {
-  "name": "orchestra-board",
+  "name": "@0000can0000/orchestra-board",
   "version": "0.1.0",
   "description": "Local control board that orchestrates Claude CLI and Codex CLI agents (seats) in debate, propose-review and direct chat workflows.",
   "license": "MIT",
+  "homepage": "https://github.com/0000can0000/orchestra-board#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0000can0000/orchestra-board.git"
+  },
+  "bugs": {
+    "url": "https://github.com/0000can0000/orchestra-board/issues"
+  },
+  "keywords": [
+    "claude",
+    "codex",
+    "cli",
+    "agents",
+    "orchestration",
+    "local"
+  ],
   "main": "src/server.js",
   "bin": {
     "orchestra-board": "bin/orchestra-board.js"

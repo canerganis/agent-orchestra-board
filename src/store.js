@@ -18,7 +18,14 @@ function createStore(projectDir) {
     write('LOG.md', cur.replace(/\s*$/, '\n') + `- ${today()} | ${agent} | ${text.replace(/\s+/g, ' ').trim()}\n`);
   }
 
-  const ensure = () => fs.mkdirSync(orch, { recursive: true });
+  // Creates .orchestra/ and, once, a .gitignore inside it that keeps the session token out of version control
+  // (users are free to commit the rest of the directory). An existing .gitignore is left alone.
+  const GITIGNORE = '# Written by Orchestra Board. The session token must never be committed; the rest is your call.\nsession\nempty/\n';
+  function ensure() {
+    fs.mkdirSync(orch, { recursive: true });
+    const gi = path.join(orch, '.gitignore');
+    try { fs.writeFileSync(gi, GITIGNORE, { flag: 'wx' }); } catch {} // exists (EEXIST) or read-only: fine
+  }
 
   return { project, orch, roomDir, read, write, readJson, writeJson, appendLog, ensure };
 }

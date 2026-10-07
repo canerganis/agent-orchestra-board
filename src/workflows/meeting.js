@@ -83,7 +83,11 @@ function createMeeting({ store, seats, rooms }) {
   function finishMeeting(room, seen = {}) {
     const sets = Object.values(seen);
     room.messages.filter((m, i) => i > 0 && m.seatId === 'user' && !sets.some((s) => s.has(m.id))).forEach((m) => sys(room, NOT_DELIVERED(m)));
-    room.status = room.stopped ? 'stopped' : 'done';
+    // A debate in which no agent turn succeeded (every CLI missing, every seat crashed) is an error, not "done".
+    const turns = room.messages.filter((m) => m.seatId !== 'system' && m.seatId !== 'user');
+    const allFailed = turns.length > 0 && turns.every((m) => m.error);
+    room.status = room.stopped ? 'stopped' : allFailed ? 'error' : 'done';
+    if (room.status === 'error') sys(room, 'Every agent turn failed, so there is no discussion. Fix the cause shown above (see the setup check), then use "Run again".');
     room.usage ||= roomUsage(room);
     pushRoom(room);
     store.appendLog('board', `Debate "${room.topic.slice(0, 80)}" ${room.status} (${room.seatIds.join(', ')}; net ${room.usage.tokens} tok, cached ${room.usage.cached}).`);

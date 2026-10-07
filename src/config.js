@@ -23,7 +23,7 @@ const CODEX_LEAN = ['--ignore-user-config', ...['apps', 'browser_use', 'computer
 const CLAUDE_LEAN = ['--strict-mcp-config', '--disable-slash-commands', '--setting-sources', '', '--exclude-dynamic-system-prompt-sections'];
 // tools mode: 'none' (discussion), 'read' (look at code), 'write' (seat must allow it).
 const CLAUDE_TOOLS = { none: [''], read: ['Read', 'Grep', 'Glob'], write: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] };
-// A tiny Haiku call is the only way to get Claude's rate_limit_event; it costs a few cents at most.
+// A tiny Haiku call is the only way to get Claude's rate_limit_event; it costs under $0.01 (lean launch, ~7k tokens).
 const CLAUDE_PROBE_MODEL = 'claude-haiku-4-5-20251001';
 
 // CLI executables; overridable so tests can point at fake CLIs.

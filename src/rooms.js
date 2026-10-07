@@ -8,19 +8,21 @@ function createRooms({ store, seats, runner, broadcast }) {
   const ROOM_DIR = store.roomDir;
   const rooms = new Map();
 
+  // One bad file (truncated, hand-edited, no `messages`) is skipped and logged; the rooms after it still load.
   function load() {
-    try {
-      fs.readdirSync(ROOM_DIR).filter((f) => f.endsWith('.json')).forEach((f) => {
+    let files = []; try { files = fs.readdirSync(ROOM_DIR).filter((f) => f.endsWith('.json')); } catch { return; }
+    for (const f of files) {
+      try {
         const r = JSON.parse(fs.readFileSync(path.join(ROOM_DIR, f), 'utf8'));
+        if (!r || typeof r !== 'object' || typeof r.id !== 'string' || !Array.isArray(r.messages)) throw new Error('not a room (missing id or messages)');
         if (r.status === 'running') r.status = 'stopped';
-        // One-time migration of legacy (Turkish) round names and DM titles; saved on the room's next write.
-        const ROUND = { 'keşif': 'scout', 'sentez': 'synthesis' };
-        if (ROUND[r.round]) r.round = ROUND[r.round];
-        r.messages.forEach((m) => { m.streaming = false; if (ROUND[m.round]) m.round = ROUND[m.round]; });
+        r.messages.forEach((m) => { m.streaming = false; });
         if (r.kind === 'dm') r.title = `Chat with ${seatById(r.seatId)?.name || r.title}`;
         rooms.set(r.id, r);
-      });
-    } catch {}
+      } catch (e) {
+        console.error(`orchestra-board: skipping unreadable room file ${path.join(ROOM_DIR, f)}: ${e.message}`);
+      }
+    }
   }
 
   // A deleted room may still be referenced by a running meeting/chain/DM turn: never write or broadcast it again.

@@ -1,0 +1,29 @@
+# Normalise line endings: source and text files are LF in the repo and in checkouts.
+* text=auto eol=lf
+
+*.js     text eol=lf
+*.mjs    text eol=lf
+*.cjs    text eol=lf
+*.json   text eol=lf
+*.html   text eol=lf
+*.css    text eol=lf
+*.svg    text eol=lf
+*.md     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.sh     text eol=lf
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+LICENSE  text eol=lf
+
+# Windows scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binaries.
+*.png binary
+*.ico binary
+*.gif binary
+*.jpg binary
+*.woff2 binary

@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # 20 is the minimum in package.json engines (EOL since 2026-04-30, kept one more release), 24 is the current LTS.
+        node: [20, 22, 24]
+    env:
+      # Never let CI reach the real CLIs: they cost money and are not installed here anyway.
+      ORCHESTRA_CLAUDE_BIN: fake-claude
+      ORCHESTRA_CODEX_BIN: fake-codex
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Syntax check every JS file
+        shell: bash
+        run: |
+          set -e
+          for f in server.js bin/orchestra-board.js $(find src test public -name '*.js'); do
+            node --check "$f"
+          done
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Smoke test the server
+        shell: bash
+        run: |
+          set -e
+          P="$RUNNER_TEMP/ob-smoke"
+          mkdir -p "$P"
+          B=http://127.0.0.1:4391
+          NO_COLOR=1 node bin/orchestra-board.js "$P" --port 4391 > "$P/server.log" 2>&1 &
+          PID=$!
+          # Wait until the port answers and the banner with the session token is in the log (60 s cap).
+          for i in $(seq 1 120); do
+            if [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/app.css")" = "200" ] && grep -q '?t=' "$P/server.log"; then break; fi
+            sleep 0.5
+          done
+          echo "--- startup output (after $((i / 2)) s) ---"; cat "$P/server.log"; echo "---"
+          TOKEN=$(grep -o '?t=[A-Za-z0-9_-]*' "$P/server.log" | head -1 | cut -c4-)
+          [ -n "$TOKEN" ] || { echo "no session token in startup output"; kill $PID || true; exit 1; }
+          JAR="$P/cookies.txt"
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          check() { local want=$1; shift; local got; got=$(code "$@"); echo "$want <- $got  $*"; [ "$got" = "$want" ]; }
+          # Static files and the security gate work without a session.
+          check 200 "$B/app.css"
+          check 200 "$B/app.js"
+          check 404 "$B/%2e%2e/package.json"
+          check 403 -X POST -H 'content-type: application/json' -H 'Origin: http://evil.example' -d '{}' "$B/api/settings"
+          check 403 -H 'Host: evil.example' "$B/api/state"
+          check 415 -X POST -H 'content-type: text/plain' -d '{}' "$B/api/settings"
+          # No cookie: the page and the API refuse; a wrong token is refused too.
+          check 401 "$B/"
+          check 401 "$B/api/state"
+          check 403 "$B/?t=wrong"
+          # Exchange the printed token for the session cookie, then the API answers.
+          check 303 -c "$JAR" "$B/?t=$TOKEN"
+          check 200 -b "$JAR" "$B/"
+          check 200 -b "$JAR" "$B/api/state"
+          check 200 -b "$JAR" "$B/api/doctor"
+          check 400 -b "$JAR" -X POST -H 'content-type: application/json' -d '{"lang":"x"}' "$B/api/settings"
+          # The token file is ignored by git inside the state directory.
+          grep -q '^session$' "$P/.orchestra/.gitignore"
+          # A mistyped project path must exit 2 and create nothing.
+          if node bin/orchestra-board.js "$RUNNER_TEMP/does-not-exist-ob" --port 4392; then echo "missing project dir was accepted"; kill $PID || true; exit 1; fi
+          [ ! -e "$RUNNER_TEMP/does-not-exist-ob" ]
+          kill $PID || true

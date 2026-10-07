@@ -1,0 +1,42 @@
+name: Feature request
+description: Propose a change or an addition.
+title: "[feature] "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before writing, check the fixed decisions in CONTRIBUTING.md (zero dependencies, read-only by default, English UI, state-only animations, security gate, token-lean design, Windows fixes). Requests that reverse one of them will be closed with a pointer there.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should the board do? Mention which workflow, seat setting, route or UI area it touches.
+    validations:
+      required: true
+  - type: textarea
+    id: tokens
+    attributes:
+      label: Token and cost impact
+      description: Does this add text to any agent turn, extra turns, or extra CLI launches? Say how you would keep it lean.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This does not reverse a fixed decision listed in CONTRIBUTING.md.
+          required: true
+        - label: I searched existing issues and discussions.

@@ -1,0 +1,13 @@
+{"type":"thread.started","thread_id":"019a1b2c-3d4e-7f80-9abc-def012345678"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"reasoning","text":""}}
+{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"**Scanning the repo**\n\nI should list the source files first."}}
+{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"powershell -Command 'Get-ChildItem src'","aggregated_output":"","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"powershell -Command 'Get-ChildItem src'","aggregated_output":"a.js\nb.js\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"error","message":"ignoring unknown config key features.plugins"}}
+{"type":"item.completed","item":{"id":"item_3","type":"error","message":"Under-development feature multi_agent is disabled"}}
+{"type":"item.completed","item":{"id":"item_4","type":"error","message":"clamping model_reasoning_effort to high"}}
+{"type":"item.completed","item":{"id":"item_5","type":"agent_message","text":"Found two files — a.js and b.js."}}
+{"type":"item.completed","item":{"id":"item_6","type":"file_change","changes":[{"path":"src/a.js","kind":"update"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_7","type":"agent_message","text":"Done."}}
+{"type":"turn.completed","usage":{"input_tokens":15234,"cached_input_tokens":12800,"output_tokens":301}}

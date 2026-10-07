@@ -1,4 +1,6 @@
-// HTTP server: static files from public/, SSE, security gate (Host/Origin allowlist, JSON-only POST) and API routes.
+// HTTP server: static files from public/, SSE, security gate (Host/Origin allowlist, session cookie from the
+// per-project token persisted in .orchestra/session, JSON-only POST, validated bodies, security headers) and API
+// routes. Threat model: see security.js.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -10,13 +12,17 @@ const { createRunner } = require('./runner');
 const { createRooms } = require('./rooms');
 const { createMeeting } = require('./workflows/meeting');
 const { createChain } = require('./workflows/chain');
+const { confineTarget } = require('./target');
+const sec = require('./security');
 const doctor = require('./doctor');
+const { v } = sec;
 
 const PUBLIC = path.join(__dirname, '..', 'public');
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json; charset=utf-8',
 };
+const MAX_BODY = 1e6;
 
 // Serves only regular files inside public/ ("/" -> index.html); returns false when nothing matched.
 function serveStatic(res, pathname) {
@@ -30,19 +36,35 @@ function serveStatic(res, pathname) {
   return true;
 }
 
+// Reads a JSON object body; rejects oversized (413) and malformed (400) bodies. An oversized body is drained
+// (discarded) so the client receives the 413 instead of a connection reset; past a hard cap the socket is cut.
+// Chunks are concatenated as bytes and decoded once, so a multi-byte character split across TCP reads survives.
 function body(req) {
-  return new Promise((res, rej) => {
-    let s = ''; req.on('data', (c) => { s += c; if (s.length > 1e6) req.destroy(); });
-    req.on('end', () => { try { res(s ? JSON.parse(s) : {}); } catch (e) { rej(e); } });
+  return new Promise((resolve, reject) => {
+    let chunks = [], size = 0;
+    const fail = (status, m) => reject(Object.assign(new Error(m), { status }));
+    req.on('data', (c) => { size += c.length; if (size > MAX_BODY) { chunks = []; if (size > 16 * MAX_BODY) req.destroy(); return; } chunks.push(c); });
+    req.on('end', () => {
+      if (size > MAX_BODY) return fail(413, 'body too large');
+      const s = Buffer.concat(chunks).toString('utf8');
+      try { resolve(v.object(s ? JSON.parse(s) : {})); } catch (e) { fail(400, e.status ? e.message : 'invalid JSON body'); }
+    });
+    req.on('error', (e) => fail(400, e.message));
+    req.on('close', () => fail(400, 'request closed'));
   });
 }
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
+const UNAUTH_HTML = '<!doctype html><meta charset="utf-8"><title>Orchestra Board</title><body style="font:15px system-ui;padding:40px;max-width:560px"><h2>Session required</h2><p>This board accepts one browser session per project. Open the link printed in the terminal where Orchestra Board was started (it ends in <code>/?t=&hellip;</code>), or restart the board with <code>--open</code>.</p></body>';
 
 function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
   const PORT = Number(port) || DEFAULT_PORT;
   const store = createStore(projectDir);
   store.ensure();
   const PROJECT = store.project;
+  // Session secret: printed in the start URL, exchanged once for an HttpOnly cookie, required on /api/*.
+  // Persisted per project (.orchestra/session, 0600) so a restart keeps open tabs and the dev preview valid.
+  const TOKEN = sec.loadOrCreateToken(path.join(store.orch, 'session'));
+  const COOKIE = sec.cookieName(PORT);
 
   // ---------- live events (SSE) ----------
   const clients = new Set();
@@ -66,20 +88,33 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
       limits: limits.get(), settings,
     };
   }
-  const ids = (arr) => (Array.isArray(arr) ? arr : []).filter((id) => seatById(id));
+  const ids = (arr) => arr.filter((id) => seatById(id));
+  const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, x]) => x !== undefined));
 
   // ---------- http ----------
+  // Everything, including the security gate, runs inside one try: a hostile request must never raise past
+  // this function (an unhandled rejection would take the board and its running agent children down).
   async function handle(req, res) {
-    // Block DNS rebinding and cross-site requests: Host must be local, and any Origin must be this board.
-    const host = String(req.headers.host || '');
-    const localHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`];
-    if (!localHosts.includes(host)) return json(res, 403, { error: 'forbidden host' });
-    const origin = req.headers.origin;
-    if (origin && !localHosts.some((h) => origin === `http://${h}`)) return json(res, 403, { error: 'forbidden origin' });
-    if (req.method === 'POST' && !String(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 415, { error: 'json required' });
-    const url = new URL(req.url, 'http://x');
-    const p = url.pathname;
     try {
+      sec.applyHeaders(res);
+      // Block DNS rebinding and cross-site requests: Host must be local, and any Origin must be this board.
+      const host = String(req.headers.host || '');
+      const localHosts = [`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`];
+      if (!localHosts.includes(host)) return json(res, 403, { error: 'forbidden host' });
+      const origin = req.headers.origin;
+      if (origin && !localHosts.some((h) => origin === `http://${h}`)) return json(res, 403, { error: 'forbidden origin' });
+      if (req.method === 'POST' && !String(req.headers['content-type'] || '').startsWith('application/json')) return json(res, 415, { error: 'json required' });
+      // Request targets like "//[" make the base-relative parse throw; that is a 400, not a crash.
+      let url; try { url = new URL(req.url, 'http://x'); } catch { return json(res, 400, { error: 'bad request' }); }
+      const p = url.pathname;
+      // Session: the token travels in the URL exactly once (first load), then only in the HttpOnly cookie.
+      const authed = sec.tokenEquals(sec.cookieValue(req.headers.cookie, COOKIE), TOKEN);
+      if (req.method === 'GET' && p === '/' && url.searchParams.has('t')) {
+        if (!sec.tokenEquals(url.searchParams.get('t'), TOKEN)) return json(res, 403, { error: 'bad session token' });
+        res.writeHead(303, { location: '/', 'set-cookie': sec.setCookie(COOKIE, TOKEN) }); return res.end();
+      }
+      if (!authed && p.startsWith('/api/')) return json(res, 401, { error: 'unauthorized: open the URL printed at startup' });
+      if (!authed && req.method === 'GET' && (p === '/' || p === '/index.html')) { res.writeHead(401, { 'content-type': 'text/html; charset=utf-8' }); return res.end(UNAUTH_HTML); }
       if (req.method === 'GET' && p === '/api/events') {
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
         res.write(`data: ${JSON.stringify({ t: 'hello' })}\n\n`);
@@ -92,7 +127,17 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
       const sm = p.match(/^\/api\/seats\/([\w-]+)\/(send|stop|reset|delete)$/);
       if (req.method !== 'POST') return json(res, 404, { error: 'not found' });
       const b = await body(req);
-      if (p === '/api/seats') return json(res, 200, publicSeat(seats.upsertSeat(b)));
+      if (p === '/api/seats') {
+        const sb = defined({
+          id: v.id(b.id, 'id'), name: v.str(b.name, 'name', { max: 24 }), role: v.str(b.role, 'role', { max: 40 }),
+          agent: v.oneOf(b.agent, 'agent', Object.keys(MODELS)), model: v.str(b.model, 'model', { max: 64 }), effort: v.str(b.effort, 'effort', { max: 16 }),
+          perm: v.oneOf(b.perm, 'perm', ['read', 'write']), target: v.str(b.target, 'target', { max: 1024 }),
+          budget: v.num(b.budget, 'budget', { min: 0, max: 1e12 }), color: v.str(b.color, 'color', { max: 7 }),
+        });
+        if (sb.id !== undefined && !seatById(sb.id)) return json(res, 404, { error: 'no such agent' });
+        if (sb.target !== undefined) sb.target = confineTarget(sb.target, PROJECT).rel; // stored relative to the project
+        return json(res, 200, publicSeat(seats.upsertSeat(sb)));
+      }
       if (p === '/api/limits/refresh') {
         limits.refreshCodex();
         limits.probeClaude();
@@ -107,27 +152,35 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
           seats.removeSeat(seat); return json(res, 200, { ok: true });
         }
         if (sm[2] === 'send') {
-          const text = String(b.text || '').trim(); if (!text) return json(res, 400, { error: 'empty message' });
+          const text = v.str(b.text, 'text', { max: 20000 }) || ''; if (!text) return json(res, 400, { error: 'empty message' });
           const room = rooms.sendDm(seat, text);
           return json(res, 200, { roomId: room.id });
         }
       }
       if (p === '/api/meeting') {
-        const seatIds = ids(b.seatIds), topic = String(b.topic || '').trim();
+        const seatIds = ids(v.idList(b.seatIds, 'seatIds')), topic = v.str(b.topic, 'topic', { max: 4000 }) || '';
         if (seatIds.length < 2 || !topic) return json(res, 400, { error: 'Pick at least 2 participants and write a topic' });
-        const room = newRoom('meeting', topic.slice(0, 60), { topic, seatIds, rounds: Math.min(Math.max(Number(b.rounds) || 2, 1), 5), synthId: seatById(b.synthId) ? b.synthId : null, scoutId: seatById(b.scoutId) ? b.scoutId : null, withContext: !!b.withContext });
+        const rounds = v.int(b.rounds, 'rounds', { min: 1, max: 5, def: 2 });
+        const synthId = v.id(b.synthId, 'synthId'), scoutId = v.id(b.scoutId, 'scoutId');
+        const room = newRoom('meeting', topic.slice(0, 60), { topic, seatIds, rounds, synthId: seatById(synthId) ? synthId : null, scoutId: seatById(scoutId) ? scoutId : null, withContext: v.bool(b.withContext, 'withContext') });
         userMsg(room, topic); runMeeting(room).catch((e) => { sys(room, '⚠ ' + e.message); room.status = 'error'; pushRoom(room); });
         return json(res, 200, { roomId: room.id });
       }
       if (p === '/api/chain') {
-        const task = String(b.task || '').trim();
-        if (!seatById(b.builderId) || !seatById(b.reviewerId) || b.builderId === b.reviewerId || !task) return json(res, 400, { error: 'Pick two different agents and write a task' });
-        const room = newRoom('chain', task.slice(0, 60), { task, builderId: b.builderId, reviewerId: b.reviewerId, maxRounds: Math.min(Math.max(Number(b.maxRounds) || 3, 1), 6), escalate: !!b.escalate, withContext: !!b.withContext });
+        const task = v.str(b.task, 'task', { max: 8000 }) || '';
+        const builderId = v.id(b.builderId, 'builderId'), reviewerId = v.id(b.reviewerId, 'reviewerId');
+        if (!seatById(builderId) || !seatById(reviewerId) || builderId === reviewerId || !task) return json(res, 400, { error: 'Pick two different agents and write a task' });
+        const maxRounds = v.int(b.maxRounds, 'maxRounds', { min: 1, max: 6, def: 3 });
+        const room = newRoom('chain', task.slice(0, 60), { task, builderId, reviewerId, maxRounds, escalate: v.bool(b.escalate, 'escalate'), withContext: v.bool(b.withContext, 'withContext') });
         userMsg(room, task); runChain(room).catch((e) => { sys(room, '⚠ ' + e.message); room.status = 'error'; pushRoom(room); });
         return json(res, 200, { roomId: room.id });
       }
       if (p === '/api/settings') {
-        if (typeof b.lang === 'string' && /^[\p{L} ()-]{2,30}$/u.test(b.lang)) settings.lang = b.lang.trim();
+        const lang = v.str(b.lang, 'lang', { max: 30 });
+        if (lang !== undefined) {
+          if (!/^[\p{L} ()-]{2,30}$/u.test(lang)) return json(res, 400, { error: 'lang must be a language name (2-30 letters)' });
+          settings.lang = lang;
+        }
         store.writeJson('settings.json', settings); broadcast({ t: 'settings', settings });
         return json(res, 200, settings);
       }
@@ -136,7 +189,7 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
         if (rm[2] === 'stop') return json(res, 200, { ok: rooms.stopRoom(rm[1]) });
         if (rm[2] === 'say') {
           // Interject: the next speaker in a running meeting/chain reads it; finished rooms only record it.
-          const room = rooms.rooms.get(rm[1]), text = String(b.text || '').trim();
+          const room = rooms.rooms.get(rm[1]), text = v.str(b.text, 'text', { max: 20000 }) || '';
           if (!room || !text) return json(res, 400, { error: 'room and text are required' });
           if (room.kind === 'dm') return json(res, 400, { error: 'use the seat send endpoint for direct messages' });
           if (room.status !== 'running') return json(res, 400, { error: 'This session has finished. Use Run again or Continue in Direct chat.' });
@@ -145,15 +198,23 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
         rooms.deleteRoom(rm[1]); return json(res, 200, { ok: true });
       }
       json(res, 404, { error: 'not found' });
-    } catch (e) { json(res, 400, { error: e.message }); }
+    } catch (e) {
+      if (res.destroyed) return;
+      if (res.headersSent) return res.end();
+      json(res, e.status === 413 ? 413 : 400, { error: e.message });
+    }
   }
+  // Last line of defence: nothing thrown while handling a request may reach process level.
+  const safeHandle = (req, res) => handle(req, res).catch(() => {
+    try { if (res.destroyed) return; if (!res.headersSent) json(res, 400, { error: 'bad request' }); else res.destroy(); } catch {}
+  });
 
-  const server = http.createServer(handle);
+  const server = http.createServer(safeHandle);
 
   function start() {
     return new Promise((resolve, reject) => {
       server.once('error', reject);
-      server.listen(PORT, '127.0.0.1', () => { limits.start(); resolve({ port: PORT, project: PROJECT, url: `http://localhost:${PORT}` }); });
+      server.listen(PORT, '127.0.0.1', () => { limits.start(); resolve({ port: PORT, project: PROJECT, url: `http://localhost:${PORT}/?t=${TOKEN}` }); });
     });
   }
   function close() {
@@ -162,7 +223,7 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
     return new Promise((resolve) => server.close(() => resolve()));
   }
 
-  return { server, start, close, state, handle, store, settings, seats, runner, rooms, limits, broadcast };
+  return { server, start, close, state, handle: safeHandle, store, settings, seats, runner, rooms, limits, broadcast, token: TOKEN };
 }
 
 module.exports = { createServer, serveStatic };
