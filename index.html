@@ -1,0 +1,834 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orchestra Board</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --surface: #ffffff; --surface-2: #f2f2f4; --hover: #ececef; --border: #e4e4e8; --border-strong: #d2d2d8;
+    --text: #18181b; --text-2: #52525b; --text-3: #8b8b95; --accent: #4f46e5; --accent-soft: #eef0ff; --accent-text: #fff;
+    --ok: #16a34a; --ok-soft: #e8f7ee; --warn: #d97706; --warn-soft: #fdf3e2; --bad: #dc2626; --bad-soft: #fdecec;
+    --claude: #d97757; --codex: #4f7cf7;
+    --radius: 10px; --shadow: 0 1px 2px rgba(16,16,24,.06), 0 4px 16px rgba(16,16,24,.06);
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #0f0f12; --surface: #17171b; --surface-2: #1d1d22; --hover: #24242a; --border: #2a2a31; --border-strong: #3a3a43;
+    --text: #ececef; --text-2: #b4b4bd; --text-3: #7c7c87; --accent: #8b85ff; --accent-soft: #24233d; --accent-text: #0f0f12;
+    --ok: #3ccf7a; --ok-soft: #15291d; --warn: #f2a93b; --warn-soft: #2d2414; --bad: #f87171; --bad-soft: #2f1717;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35); color-scheme: dark; } }
+  :root[data-theme="dark"] {
+    --bg: #0f0f12; --surface: #17171b; --surface-2: #1d1d22; --hover: #24242a; --border: #2a2a31; --border-strong: #3a3a43;
+    --text: #ececef; --text-2: #b4b4bd; --text-3: #7c7c87; --accent: #8b85ff; --accent-soft: #24233d; --accent-text: #0f0f12;
+    --ok: #3ccf7a; --ok-soft: #15291d; --warn: #f2a93b; --warn-soft: #2d2414; --bad: #f87171; --bad-soft: #2f1717;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35); color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 13.5px/1.5 "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); font-weight: 500; white-space: nowrap; transition: background .12s, border-color .12s; }
+  .btn:hover { background: var(--hover); } .btn:disabled { opacity: .5; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); } .btn.primary:hover { filter: brightness(1.07); }
+  .btn.ghost { border-color: transparent; background: transparent; } .btn.ghost:hover { background: var(--hover); }
+  .btn.danger { color: var(--bad); } .btn.sm { height: 26px; padding: 0 9px; font-size: 12.5px; } .btn.icon { width: 30px; padding: 0; justify-content: center; }
+  .input, select.input, textarea.input { width: 100%; height: 32px; padding: 0 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--surface); outline: none; transition: border-color .12s, box-shadow .12s; }
+  textarea.input { height: auto; padding: 8px 10px; resize: vertical; min-height: 80px; line-height: 1.5; }
+  .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .label { display: block; font-size: 12px; font-weight: 600; color: var(--text-2); margin: 14px 0 6px; }
+  .hint { font-size: 12px; color: var(--text-3); margin-top: 4px; }
+  kbd { font: 11px var(--mono); padding: 1px 5px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; color: var(--text-3); background: var(--surface); }
+
+  /* ---------- shell ---------- */
+  .app { display: grid; grid-template-columns: 264px minmax(0, 1fr) 320px; grid-template-rows: 52px minmax(0, 1fr); height: 100vh; }
+  .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; font-size: 14px; width: 236px; }
+  .brand .mark { width: 22px; height: 22px; border-radius: 6px; background: linear-gradient(135deg, var(--claude), var(--accent) 55%, var(--codex)); }
+  .project { font: 12px var(--mono); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  .meters { display: flex; gap: 18px; margin-left: auto; align-items: center; position: relative; cursor: pointer; padding: 4px 6px; border-radius: 7px; }
+  .meters:hover { background: var(--hover); }
+  .meter { width: 150px; } .meter .top { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-2); }
+  .meter .top span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mpop { position: absolute; z-index: 35; top: calc(100% + 10px); right: 0; width: 280px; padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); cursor: default; }
+  .mpop-h { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 0 0 4px; }
+  .mpop-r { display: flex; gap: 8px; font-size: 12px; padding: 3px 0; font-variant-numeric: tabular-nums; } .mpop-r span:first-child { flex: 1; color: var(--text-2); } .mpop-r .sub { color: var(--text-3); font-size: 11px; width: 92px; text-align: right; }
+  .mpop .btn { width: 100%; justify-content: center; margin-top: 10px; }
+  .meter .top b { font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
+  .meter .bar { height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; margin: 4px 0 2px; }
+  .meter .bar i { display: block; height: 100%; border-radius: 3px; transition: width .8s cubic-bezier(.2,.8,.2,1); }
+  .meter .sub { font-size: 10.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+  .conn { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); flex: none; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+  .dot.live { background: var(--ok); animation: pulse 1.6s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+
+  .sidebar { border-right: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; min-height: 0; }
+  .side-top { padding: 12px; } .side-top .btn { width: 100%; justify-content: center; }
+  .side-scroll { overflow-y: auto; flex: 1; padding: 0 8px 12px; }
+  .side-h { display: flex; align-items: center; justify-content: space-between; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); padding: 14px 8px 6px; }
+  .row { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 7px; cursor: pointer; min-width: 0; color: var(--text-2); }
+  .row:hover { background: var(--hover); } .row.on { background: var(--accent-soft); color: var(--text); }
+  .row .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .m { font-size: 11px; color: var(--text-3); flex: none; }
+  .row .sub { display: block; font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .av { --c: var(--accent); width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; flex: none; font-size: 11.5px; font-weight: 700; color: #fff; background: var(--c); position: relative; }
+  .av.lg { width: 36px; height: 36px; font-size: 14px; } .av.xs { width: 20px; height: 20px; font-size: 10px; }
+  .av.working::after { content: ""; position: absolute; inset: -3px; border-radius: 50%; border: 2px solid transparent; border-top-color: var(--c); border-right-color: var(--c); animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .kind { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--surface-2); color: var(--text-2); flex: none; }
+
+  /* ---------- main ---------- */
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+  .head { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); min-height: 56px; flex-wrap: wrap; }
+  .head h1 { font-size: 15px; font-weight: 650; margin: 0; flex: 1; min-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; font-size: 11.5px; font-weight: 600; background: var(--surface-2); color: var(--text-2); white-space: nowrap; }
+  .pill.running { background: var(--warn-soft); color: var(--warn); } .pill.done, .pill.passed, .pill.idle { background: var(--ok-soft); color: var(--ok); }
+  .pill.needs-you, .pill.error { background: var(--bad-soft); color: var(--bad); }
+  .banner { display: flex; align-items: center; gap: 10px; margin: 12px 20px 0; padding: 10px 12px; border-radius: var(--radius); background: var(--warn-soft); color: var(--warn); font-size: 12.5px; border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
+  .banner b { color: var(--text); } .banner .btn { margin-left: auto; }
+  .feed { flex: 1; overflow-y: auto; padding: 8px 0 24px; scroll-behavior: smooth; }
+  .feed-inner { max-width: 860px; margin: 0 auto; padding: 0 20px; }
+  .msg { display: flex; gap: 12px; padding: 12px 12px; margin: 2px 0; border-radius: var(--radius); animation: in .25s ease-out; }
+  @keyframes in { from { opacity: 0; transform: translateY(4px); } }
+  .msg:hover { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+  .msg.result { box-shadow: inset 2px 0 0 var(--accent); background: color-mix(in srgb, var(--accent-soft) 45%, transparent); }
+  .msg.streaming { background: var(--surface); box-shadow: inset 2px 0 0 var(--c, var(--accent)); }
+  .msg.flash { animation: flash 1.2s; } @keyframes flash { 30% { background: var(--accent-soft); } }
+  .msg .body { flex: 1; min-width: 0; }
+  .msg .meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+  .msg .meta b { font-weight: 650; } .msg .meta .tag { font-size: 11.5px; color: var(--text-3); }
+  .msg .meta .act { font-size: 11.5px; color: var(--warn); }
+  .msg .content { color: var(--text); word-break: break-word; }
+  .msg .content p { margin: 0 0 8px; } .msg .content p:last-child { margin-bottom: 0; }
+  .msg .content ul { margin: 4px 0 8px; padding-left: 20px; } .msg .content li { margin: 2px 0; }
+  .msg .content h4 { margin: 10px 0 4px; font-size: 13.5px; }
+  .msg .content code { font: 12px var(--mono); background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .msg .content pre { font: 12px/1.5 var(--mono); background: var(--surface-2); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+  .msg .content.raw { white-space: pre-wrap; }
+  .msg .foot { display: flex; gap: 10px; font-size: 11.5px; color: var(--text-3); margin-top: 6px; font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+  .msg .tools { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .msg .tools div { font: 11.5px var(--mono); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .msg.user .av { background: var(--text-2); }
+  .msg .err { color: var(--bad); font-size: 12.5px; margin-top: 4px; }
+  .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--text); vertical-align: text-bottom; margin-left: 1px; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .typing { display: inline-flex; gap: 4px; padding: 6px 0; } .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: hop 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .15s; } .typing i:nth-child(3) { animation-delay: .3s; }
+  @keyframes hop { 30% { transform: translateY(-4px); opacity: 1; } 0%, 60%, 100% { opacity: .35; } }
+  .sysline { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--text-3); margin: 14px 12px; }
+  .sysline::before, .sysline::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+  .verdict { font-size: 11px; font-weight: 700; height: 20px; padding: 0 8px; border-radius: 10px; display: inline-flex; align-items: center; }
+  .verdict.pass, .stance.yes { background: var(--ok-soft); color: var(--ok); } .verdict.fail { background: var(--bad-soft); color: var(--bad); }
+  .stance { font-size: 11px; font-weight: 600; height: 20px; padding: 0 8px; border-radius: 10px; display: inline-flex; align-items: center; background: var(--surface-2); color: var(--text-3); }
+
+  .composer { border-top: 1px solid var(--border); background: var(--surface); padding: 12px 20px; }
+  .composer-inner { max-width: 860px; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  .composer textarea { min-height: 38px; max-height: 160px; height: 38px; resize: none; }
+  .composer .hint { max-width: 860px; margin: 6px auto 0; }
+  .nextbar { max-width: 860px; margin: 0 auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; } .nextbar > span { margin-right: auto; color: var(--text-2); font-size: 12.5px; }
+
+  /* ---------- home ---------- */
+  .home { max-width: 900px; margin: 0 auto; padding: 36px 24px; overflow-y: auto; }
+  .home h2 { font-size: 20px; margin: 0 0 4px; } .home .lead { color: var(--text-2); margin: 0 0 22px; }
+  .tpls { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+  .tpl { text-align: left; padding: 16px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); transition: border-color .12s, transform .12s; }
+  .tpl:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .tpl .ic { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); margin-bottom: 10px; }
+  .tpl b { display: block; font-size: 14px; margin-bottom: 4px; } .tpl span { color: var(--text-2); font-size: 12.5px; }
+
+  /* ---------- inspector / workflow ---------- */
+  .inspector { border-left: 1px solid var(--border); background: var(--surface); overflow-y: auto; min-height: 0; }
+  .ins-sec { padding: 16px; border-bottom: 1px solid var(--border); }
+  .ins-h { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-3); margin: 0 0 12px; display: flex; justify-content: space-between; align-items: center; }
+  .wf-stage { position: relative; padding-left: 22px; padding-bottom: 14px; }
+  .wf-stage::before { content: ""; position: absolute; left: 7px; top: 18px; bottom: 0; width: 2px; background: var(--border); }
+  .wf-stage:last-child::before { display: none; }
+  .wf-stage.done::before { background: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+  .wf-marker { position: absolute; left: 0; top: 2px; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface); }
+  .wf-stage.done .wf-marker { border-color: var(--ok); background: var(--ok); }
+  .wf-stage.running .wf-marker { border-color: var(--warn); animation: pulse-w 1.4s infinite; }
+  @keyframes pulse-w { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 50%, transparent); } 70%, 100% { box-shadow: 0 0 0 6px transparent; } }
+  .wf-stage.skipped .wf-marker { border-style: dashed; }
+  .wf-title { display: flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; margin-bottom: 6px; }
+  .wf-title .m { margin-left: auto; font-size: 11px; color: var(--text-3); font-weight: 500; }
+  .wf-nodes { display: flex; flex-direction: column; gap: 5px; }
+  .wf-nodes.par { border-left: 2px solid var(--border); padding-left: 8px; }
+  .wf-node { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); font-size: 12px; cursor: pointer; min-width: 0; }
+  .wf-node:hover { border-color: var(--border-strong); }
+  .wf-node .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wf-node .n small { color: var(--text-3); }
+  .wf-node .s { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .wf-node.running { border-color: color-mix(in srgb, var(--warn) 55%, transparent); background: linear-gradient(90deg, var(--surface) 30%, var(--warn-soft) 50%, var(--surface) 70%); background-size: 300% 100%; animation: shimmer 1.8s linear infinite; }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: -200% 0; } }
+  .wf-node.pending { opacity: .6; border-style: dashed; } .wf-node.skipped { opacity: .45; border-style: dashed; text-decoration: line-through; }
+  .wf-node.failed { border-color: color-mix(in srgb, var(--bad) 50%, transparent); }
+  .st-ic { width: 14px; height: 14px; flex: none; }
+  .usage-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0; }
+  .usage-row .bar { flex: 1; height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; } .usage-row .bar i { display: block; height: 100%; }
+  .usage-row .v { width: 64px; text-align: right; color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; } .kv dt { color: var(--text-3); } .kv dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* ---------- overlays ---------- */
+  .scrim { position: fixed; inset: 0; background: rgba(10,10,15,.42); z-index: 30; animation: fade .15s; }
+  @keyframes fade { from { opacity: 0; } }
+  .modal { position: fixed; z-index: 31; left: 50%; top: 8vh; transform: translateX(-50%); width: min(620px, calc(100vw - 32px)); max-height: 84vh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); animation: pop .18s ease-out; }
+  @keyframes pop { from { opacity: 0; transform: translate(-50%, 8px); } }
+  .modal-h { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); font-weight: 650; font-size: 15px; }
+  .modal-b { padding: 4px 20px 20px; } .modal-f { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); }
+  .seg { display: inline-flex; padding: 3px; border-radius: 8px; background: var(--surface-2); gap: 2px; flex-wrap: wrap; }
+  .seg button { border: 0; background: transparent; height: 26px; padding: 0 10px; border-radius: 6px; font-size: 12.5px; color: var(--text-2); font-weight: 500; }
+  .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+  .picks { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pick { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 12px 0 4px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; }
+  .pick.on { border-color: var(--accent); background: var(--accent-soft); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; } .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 12px; }
+  .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--text-2); }
+  details.adv { margin-top: 16px; } details.adv summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-2); }
+  .drawer { position: fixed; z-index: 31; top: 0; right: 0; bottom: 0; width: min(400px, 100vw); background: var(--surface); border-left: 1px solid var(--border); box-shadow: var(--shadow); display: flex; flex-direction: column; animation: slide .2s ease-out; }
+  @keyframes slide { from { transform: translateX(24px); opacity: 0; } }
+  .drawer .modal-b { flex: 1; overflow-y: auto; }
+  .toasts { position: fixed; z-index: 40; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
+  .toast { display: flex; gap: 10px; align-items: center; min-width: 240px; max-width: 360px; padding: 10px 14px; border-radius: 10px; background: var(--text); color: var(--bg); font-size: 12.5px; box-shadow: var(--shadow); animation: in .2s; }
+  .empty { text-align: center; color: var(--text-3); padding: 48px 16px; }
+  .menu-btn { display: none; }
+  .app.no-ins { grid-template-columns: 264px minmax(0, 1fr); } .app.no-ins .inspector, .app.no-ins #insBtn { display: none !important; }
+
+  @media (max-width: 1180px) { .app, .app.no-ins { grid-template-columns: 240px minmax(0, 1fr); } .inspector { display: none; } .app.show-ins .inspector { display: block; position: fixed; z-index: 25; right: 0; top: 52px; bottom: 0; width: min(340px, 100vw); box-shadow: var(--shadow); } .brand { width: auto; } }
+  @media (max-width: 760px) {
+    .app, .app.no-ins { grid-template-columns: minmax(0, 1fr); } .sidebar { display: none; } .app.show-side .sidebar { display: flex; position: fixed; z-index: 25; top: 52px; bottom: 0; left: 0; width: 280px; box-shadow: var(--shadow); }
+    .menu-btn { display: inline-flex; } .meters { display: none; } .project { display: none; } .head, .composer { padding-left: 16px; padding-right: 16px; } .feed-inner { padding: 0 8px; } .grid3 { grid-template-columns: 1fr; } .grid2 { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app no-ins" id="app">
+  <header class="topbar">
+    <button class="btn ghost icon menu-btn" id="menuBtn" aria-label="Menu"><svg class="i"><use href="#i-menu"/></svg></button>
+    <div class="brand"><div class="mark"></div>Orchestra Board</div>
+    <div class="project" id="project"></div>
+    <div class="meters" id="meters"></div>
+    <div class="conn" id="conn"><span class="dot"></span><span>Connecting</span></div>
+    <button class="btn ghost icon" id="insBtn" title="Workflow panel" aria-label="Workflow panel"><svg class="i"><use href="#i-flow"/></svg></button>
+    <button class="btn ghost icon" id="settingsBtn" title="Settings" aria-label="Settings"><svg class="i"><use href="#i-gear"/></svg></button>
+  </header>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="side-top"><button class="btn primary" id="newBtn"><svg class="i"><use href="#i-plus"/></svg>New session <kbd style="margin-left:auto;background:transparent;color:inherit;border-color:currentColor;opacity:.6">Ctrl K</kbd></button></div>
+    <div class="side-scroll">
+      <div class="side-h">Sessions</div>
+      <div id="sessions"></div>
+      <div class="side-h">Agents <button class="btn ghost sm icon" id="addAgent" title="Add agent" aria-label="Add agent" style="width:22px;height:22px"><svg class="i" style="width:14px;height:14px"><use href="#i-plus"/></svg></button></div>
+      <div id="agents"></div>
+    </div>
+  </aside>
+
+  <main class="main" id="main"></main>
+
+  <aside class="inspector" id="inspector"></aside>
+</div>
+<div class="toasts" id="toasts"></div>
+<div id="overlay"></div>
+
+<svg width="0" height="0" style="position:absolute">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
+  <symbol id="i-loop" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4"/><path d="M21 13v2a3 3 0 0 1-3 3H3"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></symbol>
+  <symbol id="i-flow" viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h4a2 2 0 0 1 2 2v7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></symbol>
+  <symbol id="i-skip" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+</svg>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const icon = (id, style = '') => `<svg class="i" style="${style}"><use href="#i-${id}"/></svg>`;
+const fmtTok = (n) => { n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)); };
+const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
+const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? 'now' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`; };
+const hhmm = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const initials = (n) => String(n || '?').trim().charAt(0).toUpperCase();
+const EFFORT = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+const STATUS = { running: 'Running', done: 'Done', passed: 'Passed', 'needs-you': 'Needs you', stopped: 'Stopped', error: 'Error', idle: 'Idle' };
+const lastLine = (t) => (t || '').trim().split(/\r?\n/).pop().replace(/[*`_]/g, '').trim();
+const ls = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+
+async function api(p, b) {
+  const r = await fetch(p, b !== undefined ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) } : undefined);
+  const j = await r.json(); if (j && j.error) { toast(j.error); throw new Error(j.error); } return j;
+}
+function toast(text) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = text; $('#toasts').append(t); setTimeout(() => t.remove(), 4000); }
+
+const S = { seats: {}, order: [], rooms: {}, active: null, models: {}, efforts: {}, limits: {}, settings: {}, connected: false };
+const roundLabel = (round) => typeof round === 'number' ? `Round ${round}` : round ? String(round).replace(/^./, (c) => c.toUpperCase()) : '';
+const seatColor = (id) => S.seats[id]?.color || 'var(--text-3)';
+const avatar = (id, cls = '') => { const s = S.seats[id]; return `<div class="av ${cls} ${s?.status === 'working' ? 'working' : ''}" style="--c:${s?.color || 'var(--text-3)'}">${initials(s?.name || id)}</div>`; };
+const kindIcon = (k) => k === 'meeting' ? 'users' : k === 'chain' ? 'loop' : 'chat';
+const KIND = { meeting: 'Debate', chain: 'Propose → Review', dm: 'Direct chat' };
+
+/* ================= top bar ================= */
+const WIN = { five_hour: '5-hour', seven_day: 'Weekly', seven_day_opus: 'Weekly Opus', seven_day_sonnet: 'Weekly Sonnet' };
+function countdown(ms) { if (!ms) return ''; let s = Math.max(0, Math.round((ms - Date.now()) / 1000)); const d = Math.floor(s / 86400); s %= 86400; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; }
+// One group per CLI: [agent, windows[]], Claude first.
+function meterGroups() {
+  const out = [];
+  for (const [agent, lim] of Object.entries(S.limits || {})) {
+    if (!lim) continue;
+    const ws = Object.entries(lim.windows || {}).map(([k, w]) => ({ agent, k, pct: Math.max(0, Math.min(100, w.pct || 0)), resetsAt: w.resetsAt, updated: lim.updated }));
+    if (ws.length) out.push([agent, ws.sort((a, b) => (a.k === 'five_hour' ? -1 : b.k === 'five_hour' ? 1 : 0))]);
+  }
+  return out.sort(([a], [b]) => (a === 'claude' ? 0 : 1) - (b === 'claude' ? 0 : 1));
+}
+const cliName = (a) => a === 'claude' ? 'Claude' : 'Codex';
+const pctTxt = (p) => p.toFixed(p < 10 ? 1 : 0) + '%';
+let meterPop = false;
+function renderMeters() {
+  const groups = meterGroups();
+  const meters = groups.map(([agent, ws]) => {
+    const m = ws.reduce((a, b) => (b.pct > a.pct ? b : a));
+    const col = m.pct >= 90 ? 'var(--bad)' : m.pct >= 75 ? 'var(--warn)' : agent === 'claude' ? 'var(--claude)' : 'var(--codex)';
+    return `<div class="meter" title="Updated ${m.updated ? hhmm(m.updated) : '—'} · click for all windows"><div class="top"><span>${cliName(agent)} <b>${pctTxt(m.pct)}</b> · ${WIN[m.k] || m.k}</span></div><div class="bar"><i style="width:${m.pct}%;background:${col}"></i></div><div class="sub" data-reset="${m.resetsAt || ''}">resets in ${countdown(m.resetsAt)}</div></div>`;
+  }).join('') || '<span class="hint" style="margin:0">Usage appears after the first agent run</span>';
+  const pop = !meterPop ? '' : `<div class="mpop" id="mpop">${groups.map(([agent, ws]) => `<div class="mpop-h" style="margin-top:${agent === groups[0][0] ? 0 : 10}px">${cliName(agent)}</div>${ws.map((m) => `<div class="mpop-r"><span>${WIN[m.k] || m.k}</span><b>${pctTxt(m.pct)}</b><span class="sub" data-reset="${m.resetsAt || ''}">resets in ${countdown(m.resetsAt)}</span></div>`).join('')}`).join('') || '<div class="hint" style="margin:0">No usage data yet</div>'}
+    <button class="btn sm" id="mProbe">Refresh Claude usage (~$0.001)</button></div>`;
+  $('#meters').innerHTML = meters + pop;
+  $('#mProbe') && ($('#mProbe').onclick = async () => { try { await api('/api/limits/refresh', {}); toast('Refreshing usage…'); } catch {} });
+}
+$('#meters').onclick = (e) => { if (e.target.closest('#mpop')) return; meterPop = !meterPop; renderMeters(); };
+document.addEventListener('click', (e) => { if (meterPop && !e.composedPath().includes($('#meters'))) { meterPop = false; renderMeters(); } });
+function budgetWarning() {
+  const c = S.limits?.claude; const w = c?.windows?.seven_day;
+  if (!w || !c.updated || Date.now() - new Date(c.updated) > 6 * 3600e3) return null;
+  return w.pct >= 80 ? w.pct : null;
+}
+function renderConn() { $('#conn').innerHTML = `<span class="dot ${S.connected ? 'ok' : 'bad'}"></span><span>${S.connected ? 'Live' : 'Reconnecting'}</span>`; }
+
+/* ================= sidebar ================= */
+function renderSessions() {
+  const list = Object.values(S.rooms).sort((a, b) => (b.status === 'running') - (a.status === 'running') || b.created.localeCompare(a.created));
+  const TAG = { 'needs-you': 1, error: 1, stopped: 1, passed: 1 };
+  $('#sessions').innerHTML = list.length ? list.map((r) => `<div class="row ${r.id === S.active ? 'on' : ''}" data-room="${r.id}" title="${esc(new Date(r.created).toLocaleString())}">
+      <div class="kind">${icon(kindIcon(r.kind), 'width:14px;height:14px')}</div>
+      <div class="t">${esc(r.title)}<span class="sub">${KIND[r.kind] || r.kind}${r.usage?.tokens ? ' · ' + fmtTok(r.usage.tokens) + ' tok' : ''}</span></div>
+      ${r.status === 'running' ? '<span class="dot live"></span>' : TAG[r.status] ? `<span class="pill ${r.status}" style="height:18px;padding:0 7px;font-size:10.5px">${STATUS[r.status]}</span>` : `<span class="m">${ago(r.created)}</span>`}</div>`).join('')
+    : '<div class="hint" style="padding:4px 8px">No sessions yet</div>';
+  $('#sessions').querySelectorAll('[data-room]').forEach((el) => el.onclick = () => openRoom(el.dataset.room));
+}
+function renderAgents() {
+  $('#agents').innerHTML = S.order.map((id) => { const s = S.seats[id]; return `<div class="row" data-seat="${id}" title="${esc([`Effort: ${EFFORT[s.effort] || s.effort}`, s.activity].filter(Boolean).join(' · '))}">
+      ${avatar(id)}<div class="t">${esc(s.name)}<span class="sub">${s.status === 'working' ? `<span style="color:var(--warn)">${esc(s.activity || 'working')}…</span>` : s.status === 'error' ? `<span style="color:var(--bad)">error</span>` : esc([s.role, s.model].filter(Boolean).join(' · '))}</span></div>
+      <span class="dot ${s.status === 'working' ? 'live' : s.status === 'error' ? 'bad' : ''}"></span></div>`; }).join('');
+  $('#agents').querySelectorAll('[data-seat]').forEach((el) => el.onclick = () => openAgent(el.dataset.seat));
+}
+
+/* ================= markdown ================= */
+function md(s) {
+  const out = []; let list = false, code = false, buf = [];
+  for (const raw of String(s).split('\n')) {
+    if (raw.trim().startsWith('```')) { if (code) { out.push(`<pre>${esc(buf.join('\n'))}</pre>`); buf = []; } code = !code; continue; }
+    if (code) { buf.push(raw); continue; }
+    let l = esc(raw).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '$1');
+    const li = l.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (li) { if (!list) { out.push('<ul>'); list = true; } out.push(`<li>${li[1]}</li>`); continue; }
+    if (list) { out.push('</ul>'); list = false; }
+    if (/^#{1,4}\s/.test(l)) { out.push(`<h4>${l.replace(/^#+\s/, '')}</h4>`); continue; }
+    if (l.trim()) out.push(`<p>${l}</p>`);
+  }
+  if (list) out.push('</ul>'); if (code) out.push(`<pre>${esc(buf.join('\n'))}</pre>`);
+  return out.join('');
+}
+
+/* ================= main: home ================= */
+function renderHome() {
+  const seats = Object.values(S.seats), tok = seats.reduce((a, s) => a + (s.used || 0), 0), cost = seats.reduce((a, s) => a + (s.cost || 0), 0);
+  const warn = budgetWarning();
+  $('#main').innerHTML = `${warn ? `<div class="banner">${icon('alert')}<span><b>Claude weekly usage is at ${warn.toFixed(0)}%.</b> Consider Codex agents for heavy work.</span></div>` : ''}
+    <div class="home">
+      <h2>Start a session</h2><p class="lead">Agents are Claude or Codex CLI runs with a role. Every turn uses your plan quota. Agents can read your project but never edit it.</p>
+      <div class="tpls">
+        <button class="tpl" data-tpl="meeting"><div class="ic">${icon('users')}</div><b>Debate</b><span>A scout reads the code once, agents give independent ideas, discuss, and a facilitator writes the synthesis.</span></button>
+        <button class="tpl" data-tpl="chain"><div class="ic">${icon('loop')}</div><b>Propose → Review</b><span>One agent proposes a change, another reviews it with a PASS/FAIL verdict, looping until it passes.</span></button>
+        <button class="tpl" data-tpl="dm"><div class="ic">${icon('chat')}</div><b>Direct chat</b><span>A direct conversation with a single agent that remembers previous messages.</span></button>
+      </div>
+      ${tok || cost ? `<p class="hint" style="margin-top:22px">This project so far: ${fmtTok(tok)} tokens · $${cost.toFixed(2)} Claude</p>` : ''}
+    </div>`;
+  $('#main').querySelectorAll('[data-tpl]').forEach((b) => b.onclick = () => openNew(b.dataset.tpl));
+}
+
+/* ================= main: room ================= */
+// Full build of the room view. Runs only when the active room changes (openRoom) or the view is missing.
+function renderRoom() {
+  const r = S.rooms[S.active];
+  if (!r) { $('#main').innerHTML = '<div class="empty">Starting session…</div>'; return; }
+  $('#main').innerHTML = `<div class="head"></div>
+    <div class="feed" id="feed"><div class="feed-inner" id="feedInner"></div></div>
+    <div class="composer" id="composerArea"></div>`;
+  renderRoomHead(); renderComposer();
+  r.messages.forEach((m) => paintMsg(m, false));
+  if (!r.messages.length) $('#feedInner').innerHTML = '<div class="empty">No messages yet.</div>';
+  const f = $('#feed'); f.scrollTop = f.scrollHeight;
+}
+// Repaints only the header: title, pills, Stop, Run again, Result, Delete.
+function renderRoomHead() {
+  const r = S.rooms[S.active], h = $('#main .head'); if (!r || !h) return;
+  const total = r.kind === 'meeting' ? r.rounds : r.kind === 'chain' ? r.maxRounds : null;
+  const roundTxt = total ? (typeof r.round === 'number' ? `${roundLabel(r.round)} of ${total}` : roundLabel(r.round)) : '';
+  const live = r.status === 'running', dm = r.kind === 'dm';
+  const ready = dm && !live && r.status !== 'error';
+  const statusTxt = dm ? (live ? 'Replying' : ready ? 'Ready' : STATUS[r.status] || r.status) : STATUS[r.status] || r.status;
+  h.innerHTML = `
+      <div class="kind">${icon(kindIcon(r.kind), 'width:14px;height:14px')}</div>
+      <h1 title="${esc(r.topic || r.task || r.title)}">${esc(r.title)}</h1>
+      <span class="pill">${KIND[r.kind] || r.kind}</span>${roundTxt ? `<span class="pill">${esc(roundTxt)}</span>` : ''}<span class="pill ${ready ? 'idle' : r.status}">${live ? '<span class="dot live"></span>' : ''}${esc(statusTxt)}</span>
+      ${live ? `<button class="btn sm danger" id="stopRoom">${icon('stop', 'width:13px;height:13px')}Stop</button>` : ''}
+      ${r.resultId ? '<button class="btn sm" id="resultRoom">Result</button>' : ''}
+      ${!live && !dm ? '<button class="btn sm" id="againRoom">Run again</button>' : ''}
+      <button class="btn sm ghost icon" id="delRoom" title="Delete session" aria-label="Delete session">${icon('trash', 'width:14px;height:14px')}</button>`;
+  $('#stopRoom') && ($('#stopRoom').onclick = () => api(`/api/rooms/${r.id}/stop`, {}).catch(() => {}));
+  $('#resultRoom') && ($('#resultRoom').onclick = () => jumpTo(r.resultId));
+  $('#againRoom') && ($('#againRoom').onclick = () => openNew(r.kind, roomPreset(r)));
+  $('#delRoom').onclick = () => { if (confirm('Delete this session and its transcript?')) api(`/api/rooms/${r.id}/delete`, {}).catch(() => {}); };
+}
+// Composer for Direct chat and running sessions; a next-step bar for finished Debate / Propose → Review.
+const composerMode = (r) => r.kind === 'dm' ? 'dm' : r.status === 'running' ? 'live' : 'done';
+function renderComposer() {
+  const r = S.rooms[S.active], el = $('#composerArea'); if (!r || !el) return;
+  const mode = composerMode(r); el.dataset.mode = mode;
+  if (mode === 'done') {
+    el.innerHTML = `<div class="nextbar"><span>Session finished</span><button class="btn sm" id="nbAgain">Run again</button><button class="btn sm primary" id="nbDm">Continue in Direct chat</button></div>`;
+    $('#nbAgain').onclick = () => openNew(r.kind, roomPreset(r));
+    $('#nbDm').onclick = () => continueInDm(r);
+    return;
+  }
+  const draft = $('#compose')?.value || ''; // keep what the user is typing across re-renders
+  const placeholder = mode === 'dm' ? `Message ${S.seats[r.seatId]?.name || 'agent'}…` : 'Add a note — the next agent turn will read it…';
+  el.innerHTML = `<div class="composer-inner">
+      <textarea class="input" id="compose" rows="1" placeholder="${esc(placeholder)}"></textarea>
+      <button class="btn primary icon" id="sendBtn" aria-label="Send" style="height:38px;width:38px">${icon('send')}</button>
+    </div><div class="hint">${mode === 'dm' ? 'Enter to send · Shift+Enter for a new line' : 'Interject: your note goes to the next agent turn.'}</div>`;
+  const ta = $('#compose');
+  if (draft) { ta.value = draft; ta.focus(); }
+  ta.oninput = () => { ta.style.height = '38px'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; };
+  ta.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+  $('#sendBtn').onclick = send;
+}
+function markResult() {
+  const r = S.rooms[S.active];
+  document.querySelectorAll('#feedInner .msg.result').forEach((el) => { if (el.dataset.id !== r?.resultId) el.classList.remove('result'); });
+  if (r?.resultId) document.querySelector(`#feedInner [data-id="${r.resultId}"]`)?.classList.add('result');
+}
+function jumpTo(id) {
+  const t = document.querySelector(`#feedInner [data-id="${id}"]`); if (!t) return;
+  t.scrollIntoView({ block: 'center' }); t.classList.remove('flash'); void t.offsetWidth; t.classList.add('flash');
+}
+function roomPreset(r) {
+  if (r.kind === 'meeting') return { topic: r.topic, seatIds: r.seatIds, scoutId: r.scoutId, synthId: r.synthId, rounds: r.rounds, withContext: r.withContext };
+  if (r.kind === 'chain') return { task: r.task, builderId: r.builderId, reviewerId: r.reviewerId, maxRounds: r.maxRounds, escalate: r.escalate, withContext: r.withContext };
+  return { seatId: r.seatId };
+}
+function continueInDm(r) {
+  const seatId = r.synthId || r.builderId || r.seatIds?.[0];
+  const res = (r.resultId && r.messages.find((m) => m.id === r.resultId)) || [...r.messages].reverse().find((m) => m.seatId !== 'system' && m.seatId !== 'user' && !m.streaming && m.text);
+  const body = (res?.text || '').trim().slice(0, 1500);
+  openNew('dm', { seatId, message: `About: ${r.topic || r.task || r.title}\n\nResult so far:\n${body}\n\n` });
+}
+async function send() {
+  const r = S.rooms[S.active], ta = $('#compose'), btn = $('#sendBtn'); if (!r || !ta || !btn || btn.disabled) return;
+  const text = ta.value.trim(); if (!text) return;
+  btn.disabled = true;
+  try {
+    if (r.kind === 'dm') await api(`/api/seats/${r.seatId}/send`, { text });
+    else { await api(`/api/rooms/${r.id}/say`, { text }); toast('Note added — the next agent turn will read it'); }
+    const cur = $('#compose'); if (cur && cur.value.trim() === text) { cur.value = ''; cur.style.height = '38px'; }
+  } catch {} finally { const b = $('#sendBtn'); if (b) b.disabled = false; }
+}
+
+const tw = {}; // streaming text buffers: msg id -> { shown, pending }
+function msgHtml(m) {
+  if (m.seatId === 'system') return `<div class="sysline" data-id="${m.id}">${esc(m.text)}</div>`;
+  const isUser = m.seatId === 'user';
+  return `<div class="msg ${isUser ? 'user' : ''}" data-id="${m.id}" style="--c:${isUser ? 'var(--text-2)' : m.color || seatColor(m.seatId)}">
+    ${isUser ? '<div class="av">Y</div>' : `<div class="av" style="--c:${m.color || seatColor(m.seatId)}">${initials(m.name)}</div>`}
+    <div class="body"><div class="meta"></div><div class="content"></div><div class="tools"></div><div class="foot"></div></div></div>`;
+}
+function paintMsg(m, scroll = true) {
+  const inner = $('#feedInner'), r = S.rooms[S.active]; if (!inner || !r?.messages.some((x) => x.id === m.id)) return;
+  inner.querySelector('.empty')?.remove();
+  let el = inner.querySelector(`[data-id="${m.id}"]`);
+  const f = $('#feed'), near = f.scrollHeight - f.scrollTop - f.clientHeight < 140;
+  if (!el) {
+    const msgs = r.messages, i = msgs.findIndex((x) => x.id === m.id), prev = msgs.slice(0, i).reverse().find((x) => x.seatId !== 'system' && x.seatId !== 'user');
+    if (m.seatId !== 'system' && m.seatId !== 'user' && m.round !== undefined && (!prev || String(prev.round) !== String(m.round))) {
+      inner.insertAdjacentHTML('beforeend', `<div class="sysline">${esc(roundLabel(m.round))}</div>`);
+    }
+    inner.insertAdjacentHTML('beforeend', msgHtml(m)); el = inner.lastElementChild;
+  }
+  if (m.seatId === 'system') return;
+  el.classList.toggle('streaming', !!m.streaming);
+  el.classList.toggle('result', m.id === r.resultId);
+  const s = S.seats[m.seatId];
+  if (m.seatId === 'user') el.querySelector('.meta').innerHTML = `<b>You</b><span class="tag">${hhmm(m.ts)}</span>`;
+  else {
+    const stance = !m.streaming && /^STANCE:/i.test(lastLine(m.text)) ? (/CONVERGED/i.test(lastLine(m.text)) ? '<span class="stance yes">Converged</span>' : '<span class="stance">Open</span>') : '';
+    el.querySelector('.meta').innerHTML = `<b>${esc(m.name)}</b><span class="tag">${esc(m.label || '')}</span>${m.verdict ? `<span class="verdict ${m.verdict}">${m.verdict === 'pass' ? 'PASS' : 'FAIL'}</span>` : ''}${stance}${m.streaming && s?.activity ? `<span class="act">${esc(s.activity)}…</span>` : ''}`;
+    const foot = el.querySelector('.foot');
+    foot.innerHTML = m.streaming ? '' : [hhmm(m.ts), m.ended ? fmtDur(new Date(m.ended) - new Date(m.ts)) : '', m.tokens ? `${fmtTok(m.tokens)} tokens` : ''].filter(Boolean).map(esc).join('<span>·</span>');
+    foot.title = m.streaming ? '' : [m.cached ? `${fmtTok(m.cached)} cached` : '', m.cost ? '$' + m.cost.toFixed(3) : '', m.effort ? (EFFORT[m.effort] || m.effort) + ' effort' : '', m.tools === 'none' ? 'no tools' : ''].filter(Boolean).join(' · ');
+  }
+  const c = el.querySelector('.content'), st = tw[m.id];
+  if (m.streaming) { if (!st || (!st.shown && !st.pending)) c.innerHTML = '<span class="typing"><i></i><i></i><i></i></span>'; }
+  else if (!st || !st.pending) {
+    const body = (m.text || '').replace(/\n?\s*\**STANCE:\s*\w+\**\s*$/i, '').replace(/\n?\s*\**VERDICT:\s*\w+\**\s*$/i, '');
+    c.classList.remove('raw'); c.innerHTML = md(body) + (m.error ? `<div class="err">${esc(m.error)}</div>` : '');
+  }
+  if (scroll && near) f.scrollTop = f.scrollHeight;
+}
+// Reveal streamed text progressively; Codex delivers whole messages at once.
+function twLoop() {
+  for (const [id, st] of Object.entries(tw)) {
+    if (!st.pending) continue;
+    const n = Math.max(3, Math.ceil(st.pending.length / 12));
+    st.shown += st.pending.slice(0, n); st.pending = st.pending.slice(n);
+    const el = document.querySelector(`#feedInner [data-id="${id}"] .content`);
+    if (el) { el.classList.add('raw'); el.textContent = st.shown; el.insertAdjacentHTML('beforeend', '<span class="caret"></span>'); const f = $('#feed'); if (f && f.scrollHeight - f.scrollTop - f.clientHeight < 160) f.scrollTop = f.scrollHeight; }
+    if (!st.pending) { const m = findMsg(id); if (m && !m.streaming) paintMsg(m); }
+  }
+  requestAnimationFrame(twLoop);
+}
+const findMsg = (id) => { for (const r of Object.values(S.rooms)) { const m = r.messages?.find((x) => x.id === id); if (m) return m; } return null; };
+
+/* ================= inspector: workflow ================= */
+function nodeState(r, seatId, round) {
+  const m = r.messages.find((x) => x.seatId === seatId && String(x.round) === String(round));
+  if (m) return { m, state: m.streaming ? 'running' : m.error ? 'failed' : 'done' };
+  const silent = r.messages.find((x) => x.skip && x.skip.seatId === seatId && String(x.skip.round) === String(round));
+  const early = r.messages.find((x) => x.earlyStop);
+  if (silent || (early && typeof round === 'number' && round > early.earlyStop)) return { state: 'skipped', why: silent ? 'silent agreement' : 'converged early' };
+  return { state: r.status === 'running' ? 'pending' : 'skipped' };
+}
+function stage(title, nodes, { parallel = false, meta = '' } = {}) {
+  const states = nodes.map((n) => n.state);
+  const st = states.includes('running') ? 'running' : states.every((s) => s === 'done' || s === 'skipped') && states.some((s) => s === 'done') ? 'done' : states.every((s) => s === 'skipped') ? 'skipped' : 'pending';
+  return `<div class="wf-stage ${st}"><div class="wf-marker"></div><div class="wf-title">${esc(title)}${parallel ? '<span class="pill" style="height:18px;font-size:10.5px">parallel</span>' : ''}<span class="m">${meta}</span></div>
+    <div class="wf-nodes ${parallel ? 'par' : ''}">${nodes.map(nodeHtml).join('')}</div></div>`;
+}
+function nodeHtml(n) {
+  const s = S.seats[n.seatId], m = n.m;
+  const ic = n.state === 'done' ? icon('check', 'width:14px;height:14px;color:var(--ok)') : n.state === 'failed' ? icon('alert', 'width:14px;height:14px;color:var(--bad)') : n.state === 'skipped' ? icon('skip', 'width:14px;height:14px;color:var(--text-3)') : n.state === 'running' ? icon('clock', 'width:14px;height:14px;color:var(--warn)') : icon('clock', 'width:14px;height:14px;color:var(--text-3)');
+  const extra = m?.verdict ? `<span class="verdict ${m.verdict}" style="height:16px;font-size:10px">${m.verdict.toUpperCase()}</span>` : '';
+  const stat = n.state === 'running' && s?.startedAt ? `<span class="s" data-since="${s.startedAt}"></span>` : m && !m.streaming && m.tokens ? `<span class="s">${fmtTok(m.tokens)}${m.ended ? ' · ' + fmtDur(new Date(m.ended) - new Date(m.ts)) : ''}</span>` : n.why ? `<span class="s">${n.why}</span>` : '';
+  return `<div class="wf-node ${n.state}" ${m ? `data-jump="${m.id}"` : ''}>${avatar(n.seatId, 'xs')}<span class="n">${esc(s?.name || n.seatId)} <small>${esc(n.label || '')}</small></span>${extra}${stat}${ic}</div>`;
+}
+function renderInspector() {
+  const ins = $('#inspector'); const r = S.rooms[S.active];
+  if (!r) { ins.innerHTML = ''; return; } // Home: no inspector (#app.no-ins)
+  let flow = '';
+  if (r.kind === 'meeting') {
+    const N = (id, round, label) => ({ seatId: id, label, ...nodeState(r, id, round) });
+    if (r.scoutId) flow += stage('Scout', [N(r.scoutId, 'scout', 'reads code, writes brief')]);
+    flow += stage('Round 1 · ideas', r.seatIds.map((id) => N(id, 1, 'independent')), { parallel: true });
+    for (let i = 2; i <= r.rounds; i++) flow += stage(`Round ${i} · discussion`, r.seatIds.map((id) => N(id, i, 'no tools')));
+    if (r.synthId) flow += stage('Synthesis', [N(r.synthId, 'synthesis', 'writes to BRAINSTORM.md')]);
+  } else if (r.kind === 'chain') {
+    const passedAt = r.messages.find((m) => m.verdict === 'pass')?.round;
+    for (let i = 1; i <= r.maxRounds; i++) {
+      const nodes = [{ seatId: r.builderId, label: 'propose', ...nodeState(r, r.builderId, i) }, { seatId: r.reviewerId, label: 'review', ...nodeState(r, r.reviewerId, i) }];
+      if (passedAt && i > passedAt) nodes.forEach((n) => { n.state = 'skipped'; n.why = 'passed'; });
+      flow += stage(`Round ${i}`, nodes);
+    }
+    flow += `<div class="wf-stage ${r.status === 'passed' ? 'done' : ''}"><div class="wf-marker"></div><div class="wf-title">${r.status === 'passed' ? 'Passed review' : r.status === 'needs-you' ? 'Your decision' : 'Result'}</div></div>`;
+  } else {
+    const turns = r.messages.filter((m) => m.seatId === r.seatId);
+    flow = stage('Conversation', turns.length ? turns.map((m) => ({ seatId: m.seatId, label: hhmm(m.ts), m, state: m.streaming ? 'running' : m.error ? 'failed' : 'done' })) : [{ seatId: r.seatId, state: 'pending', label: 'waiting for a message' }]);
+  }
+  // usage in this session (computed by the server after every agent turn)
+  const u = r.usage, per = Object.entries(u?.perSeat || {}).filter(([, v]) => v > 0), max = Math.max(1, ...per.map(([, v]) => v));
+  ins.innerHTML = `<div class="ins-sec"><div class="ins-h">Workflow</div>${flow}</div>
+    <div class="ins-sec"><div class="ins-h">Usage ${u?.tokens ? `<span style="text-transform:none;letter-spacing:0">${fmtTok(u.tokens)} net</span>` : ''}</div>
+      ${per.map(([id, v]) => `<div class="usage-row">${avatar(id, 'xs')}<span style="width:56px;overflow:hidden;text-overflow:ellipsis">${esc(S.seats[id]?.name || id)}</span><div class="bar"><i style="width:${(v / max) * 100}%;background:${seatColor(id)}"></i></div><span class="v">${fmtTok(v)}</span></div>`).join('') || '<div class="hint">No usage yet</div>'}
+      <dl class="kv" style="margin-top:10px">${u ? `<dt>Cached input</dt><dd>${fmtTok(u.cached)}</dd><dt>Claude cost</dt><dd>$${(u.cost || 0).toFixed(3)}</dd>` : ''}<dt>Started</dt><dd>${hhmm(r.created)}</dd></dl></div>`;
+  ins.querySelectorAll('[data-jump]').forEach((el) => el.onclick = () => jumpTo(el.dataset.jump));
+  tickTimers();
+}
+let insTimer = null;
+const scheduleInspector = () => { if (insTimer) return; insTimer = setTimeout(() => { insTimer = null; renderInspector(); }, 150); };
+function tickTimers() {
+  document.querySelectorAll('[data-since]').forEach((el) => { el.textContent = fmtDur(Date.now() - new Date(el.dataset.since)); });
+  document.querySelectorAll('[data-reset]').forEach((el) => { el.textContent = el.dataset.reset ? 'resets in ' + countdown(Number(el.dataset.reset)) : ''; });
+}
+setInterval(tickTimers, 1000);
+
+/* ================= overlays ================= */
+function closeOverlay() { $('#overlay').innerHTML = ''; }
+// Escape / scrim: never throw away a modal that has typed text (Cancel / X still close it).
+function softClose() { const m = $('#overlay .modal'); if (m && [...m.querySelectorAll('textarea')].some((t) => t.value.trim())) return; closeOverlay(); }
+function overlay(html, cls = 'modal') { $('#overlay').innerHTML = `<div class="scrim"></div><div class="${cls}" role="dialog">${html}</div>`; $('#overlay .scrim').onclick = softClose; return $('#overlay .' + cls.split(' ')[0]); }
+const newKind = () => ls.get('ob.new.kind') || 'meeting';
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { if (meterPop) { meterPop = false; renderMeters(); } else softClose(); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openNew(newKind()); }
+});
+
+// preset (from "Run again" / "Continue in Direct chat") uses room field names; stored values use form names.
+const PRESET_MAP = { seatIds: 'participants', scoutId: 'scout', synthId: 'facilitator', rounds: 'rounds', withContext: 'ctx', builderId: 'builder', reviewerId: 'reviewer', maxRounds: 'max', escalate: 'escalate', seatId: 'seat', topic: 'topic', task: 'task', message: 'message' };
+function openNew(kind, preset) {
+  if (!KIND[kind]) kind = 'meeting';
+  const seats = S.order.map((id) => S.seats[id]), has = (id) => !!S.seats[id];
+  const firstClaude = seats.find((s) => s.agent === 'claude')?.id || S.order[0], firstCodex = seats.find((s) => s.agent === 'codex')?.id || S.order[1] || S.order[0];
+  const stored = (k) => { try { return JSON.parse(ls.get('ob.new.' + k) || '{}') || {}; } catch { return {}; } };
+  const P = {}; for (const [from, to] of Object.entries(PRESET_MAP)) if (preset && from in preset) P[to] = preset[from] ?? '';
+  const defaults = {
+    meeting: { topic: '', participants: [...new Set([firstClaude, firstCodex].filter(Boolean))], scout: firstCodex || '', facilitator: firstClaude || '', rounds: 2, ctx: false },
+    chain: { task: '', builder: firstClaude, reviewer: firstCodex, max: 2, escalate: false, ctx: false },
+    dm: { seat: firstClaude, message: '' },
+  };
+  const v = {};
+  for (const k of Object.keys(defaults)) {
+    const x = v[k] = { ...defaults[k], ...stored(k), ...(k === kind ? P : {}) }, d = defaults[k];
+    // ignore seats that no longer exist
+    if ('participants' in x) { x.participants = (Array.isArray(x.participants) ? x.participants : []).filter(has); if (!x.participants.length) x.participants = d.participants; }
+    for (const f of ['scout', 'facilitator']) if (f in x && x[f] && !has(x[f])) x[f] = d[f];
+    for (const f of ['builder', 'reviewer', 'seat']) if (f in x && !has(x[f])) x[f] = d[f];
+  }
+  const opt = (sel, none) => (none ? '<option value="">None</option>' : '') + seats.map((s) => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${esc(s.name)} · ${esc(s.model)}</option>`).join('');
+  const nums = (list, sel) => [...new Set([...list, Number(sel) || list[1]])].sort((a, b) => a - b).map((n) => `<option ${n === (Number(sel) || list[1]) ? 'selected' : ''}>${n}</option>`).join('');
+  const ctxBox = (on, style = '') => `<label class="check" style="${style}"><input type="checkbox" id="nCtx" ${on ? 'checked' : ''}> Include project notes (.orchestra PLAN / HANDOFF / LOG)</label>`;
+  const box = overlay(`<div class="modal-h">New session<button class="btn ghost icon" data-close aria-label="Close">${icon('x')}</button></div>
+    <div class="modal-b">
+      <div class="label">Workflow</div>
+      <div class="seg" id="nKind">${['meeting', 'chain', 'dm'].map((k) => `<button data-k="${k}" class="${k === kind ? 'on' : ''}">${KIND[k]}</button>`).join('')}</div>
+      <div id="nForm"></div>
+    </div>
+    <div class="modal-f"><span class="hint" id="nCost" style="margin:0 auto 0 0;align-self:center"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="nGo">Start</button></div>`);
+  box.querySelectorAll('[data-close]').forEach((b) => b.onclick = closeOverlay);
+  const cur = () => box.querySelector('#nKind .on').dataset.k, q = (s) => box.querySelector(s);
+  // read the visible form into v[k]
+  const read = () => {
+    const k = cur(), x = v[k];
+    if (k === 'meeting') Object.assign(x, { topic: q('#nTopic').value, scout: q('#nScout').value, facilitator: q('#nSynth').value, rounds: Number(q('#nRounds').value), ctx: q('#nCtx').checked });
+    else if (k === 'chain') Object.assign(x, { task: q('#nTask').value, builder: q('#nBuilder').value, reviewer: q('#nReviewer').value, max: Number(q('#nMax').value), escalate: q('#nEsc').checked, ctx: q('#nCtx').checked });
+    else Object.assign(x, { seat: q('#nSeat').value, message: q('#nMsg').value });
+  };
+  const update = () => {
+    read(); const k = cur(), x = v[k];
+    const n = k === 'meeting' ? (x.scout ? 1 : 0) + x.participants.length * x.rounds + (x.facilitator ? 1 : 0) : k === 'chain' ? 2 * x.max : 1;
+    q('#nCost').textContent = `Up to ${n} agent run${n === 1 ? '' : 's'} · uses your Claude/Codex quota`;
+    if (k === 'dm') { const s = S.seats[x.seat]; q('#nDmHint').textContent = s ? `Continues your existing chat with ${s.name} (memory: ${s.thread ? 'active' : 'empty'})` : ''; }
+  };
+  const form = () => {
+    const k = cur(), f = q('#nForm'), x = v[k];
+    if (k === 'meeting') f.innerHTML = `
+      <div class="label">Topic</div><textarea class="input" id="nTopic" placeholder="What should the agents discuss?">${esc(x.topic)}</textarea>
+      <div class="label">Participants</div><div class="picks" id="nPicks">${seats.map((s) => `<button class="pick ${x.participants.includes(s.id) ? 'on' : ''}" data-id="${s.id}">${avatar(s.id, 'xs')}${esc(s.name)}</button>`).join('')}</div>
+      <div class="grid3"><div><div class="label">Scout</div><select class="input" id="nScout">${opt(x.scout, true)}</select><div class="hint">Reads the code once so others don't have to (saves tokens)</div></div>
+        <div><div class="label">Facilitator</div><select class="input" id="nSynth">${opt(x.facilitator, true)}</select><div class="hint">Summarizes at the end; saved to .orchestra/BRAINSTORM.md</div></div>
+        <div><div class="label">Rounds</div><select class="input" id="nRounds">${nums([1, 2, 3, 4], x.rounds)}</select><div class="hint">Stops early on consensus</div></div></div>
+      ${ctxBox(x.ctx)}`;
+    else if (k === 'chain') f.innerHTML = `
+      <div class="label">Task</div><textarea class="input" id="nTask" placeholder="What should be proposed and reviewed?">${esc(x.task)}</textarea>
+      <div class="grid3"><div><div class="label">Proposer</div><select class="input" id="nBuilder">${opt(x.builder)}</select></div>
+        <div><div class="label">Reviewer</div><select class="input" id="nReviewer">${opt(x.reviewer)}</select></div>
+        <div><div class="label">Max rounds</div><select class="input" id="nMax">${nums([1, 2, 3], x.max)}</select></div></div>
+      <label class="check"><input type="checkbox" id="nEsc" ${x.escalate ? 'checked' : ''}> Raise proposer effort after a FAIL</label>
+      ${ctxBox(x.ctx, 'margin-top:6px')}`;
+    else f.innerHTML = `<div class="label">Agent</div><select class="input" id="nSeat">${opt(x.seat)}</select>
+      <div class="label">Message</div><textarea class="input" id="nMsg" placeholder="Ask something…">${esc(x.message)}</textarea><div class="hint" id="nDmHint"></div>`;
+    f.querySelectorAll('.pick').forEach((p) => p.onclick = () => { const id = p.dataset.id, l = v.meeting.participants; v.meeting.participants = l.includes(id) ? l.filter((y) => y !== id) : [...l, id]; p.classList.toggle('on'); update(); });
+    f.oninput = f.onchange = update;
+    const ta = f.querySelector('textarea'); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    update();
+  };
+  box.querySelectorAll('#nKind button').forEach((b) => b.onclick = () => { read(); box.querySelectorAll('#nKind button').forEach((x) => x.classList.toggle('on', x === b)); form(); });
+  form();
+  const go = q('#nGo');
+  go.onclick = async () => {
+    if (go.disabled) return;
+    read(); const k = cur(), x = v[k]; let r;
+    if (k === 'dm' && !x.message.trim()) return toast('Write a message first');
+    go.disabled = true; go.textContent = 'Starting…';
+    try {
+      if (k === 'meeting') r = await api('/api/meeting', { topic: x.topic, seatIds: S.order.filter((id) => x.participants.includes(id)), scoutId: x.scout, synthId: x.facilitator, rounds: x.rounds, withContext: x.ctx });
+      else if (k === 'chain') r = await api('/api/chain', { task: x.task, builderId: x.builder, reviewerId: x.reviewer, maxRounds: x.max, escalate: x.escalate, withContext: x.ctx });
+      else r = await api(`/api/seats/${x.seat}/send`, { text: x.message.trim() });
+      const { topic, task, message, ...keep } = x; // remember the setup, never the text
+      ls.set('ob.new.kind', k); ls.set('ob.new.' + k, JSON.stringify(keep));
+      closeOverlay(); openRoom(r.roomId);
+    } catch {} finally { go.disabled = false; go.textContent = 'Start'; }
+  };
+}
+
+function openAgent(id) {
+  const isNew = !id; const s = isNew ? { name: '', role: '', agent: 'codex', model: S.models.codex[0], effort: 'medium', perm: 'read', target: '', budget: 0, color: '#14b8a6' } : S.seats[id];
+  const box = overlay(`<div class="modal-h">${isNew ? 'New agent' : `<span style="display:flex;align-items:center;gap:10px">${avatar(id, 'lg')}${esc(s.name)}</span>`}<button class="btn ghost icon" data-close aria-label="Close">${icon('x')}</button></div>
+    <div class="modal-b">
+      <div class="grid2"><div><div class="label">Name</div><input class="input" id="aName" maxlength="24" value="${esc(s.name)}"></div><div><div class="label">Role</div><input class="input" id="aRole" maxlength="40" value="${esc(s.role || '')}" placeholder="e.g. Reviewer"></div></div>
+      <div class="hint">Changing name, role, runtime or scope resets this agent's memory.</div>
+      <div class="label">Runtime</div><div class="seg" id="aAgent">${['claude', 'codex'].map((a) => `<button data-a="${a}" class="${a === s.agent ? 'on' : ''}">${a === 'claude' ? 'Claude CLI' : 'Codex CLI'}</button>`).join('')}</div>
+      <div class="label">Model</div><input class="input" id="aModel" list="aModels" value="${esc(s.model || '')}" placeholder="pick or type a model"><datalist id="aModels"></datalist>
+      <div class="label">Effort</div><div class="seg" id="aEffort"></div><div class="hint">Discussion rounds are capped at Medium automatically.</div>
+      <details class="adv"><summary>Advanced</summary>
+        <div class="label">Scope</div><input class="input" id="aTarget" value="${esc(s.target || '')}" placeholder="folder or file inside the project (empty = whole project)" style="font-family:var(--mono);font-size:12.5px">
+        <div class="grid2"><div><div class="label">Token budget</div><input class="input" id="aBudget" type="number" min="0" step="10000" value="${s.budget || 0}"><div class="hint">0 = unlimited</div></div><div><div class="label">Color</div><input class="input" id="aColor" type="color" value="${s.color || '#14b8a6'}" style="padding:2px 4px"></div></div>
+      </details>
+      ${isNew ? '' : `<div class="label">Usage</div><dl class="kv"><dt>Net tokens</dt><dd>${fmtTok(s.used)}</dd><dt>Cached</dt><dd>${fmtTok(s.cached)}</dd><dt>Cost</dt><dd>$${(s.cost || 0).toFixed(3)}</dd><dt>Memory</dt><dd>${s.thread ? 'active' : 'empty'}</dd></dl>`}
+    </div>
+    <div class="modal-f">${isNew ? '' : `<button class="btn danger" id="aDel" style="margin-right:auto">${icon('trash', 'width:14px;height:14px')}Delete</button><button class="btn" id="aReset">Clear memory</button>`}<button class="btn" data-close>Cancel</button><button class="btn primary" id="aSave">${isNew ? 'Add agent' : 'Save'}</button></div>`, 'drawer');
+  box.querySelectorAll('[data-close]').forEach((b) => b.onclick = closeOverlay);
+  let agent = s.agent, effort = s.effort;
+  // Runs only when the runtime changes, so a typed model is never reverted.
+  const fillRuntime = () => {
+    box.querySelector('#aModels').innerHTML = (S.models[agent] || []).map((m) => `<option value="${esc(m)}">`).join('');
+    const list = S.efforts[agent] || [];
+    if (!list.includes(effort)) effort = list.includes('medium') ? 'medium' : list[0];
+    box.querySelector('#aEffort').innerHTML = list.map((e) => `<button data-e="${e}" class="${e === effort ? 'on' : ''}">${EFFORT[e] || e}</button>`).join('');
+    box.querySelectorAll('#aEffort button').forEach((b) => b.onclick = () => { effort = b.dataset.e; box.querySelectorAll('#aEffort button').forEach((x) => x.classList.toggle('on', x === b)); });
+  };
+  box.querySelectorAll('#aAgent button').forEach((b) => b.onclick = () => {
+    if (b.dataset.a === agent) return;
+    agent = b.dataset.a; box.querySelectorAll('#aAgent button').forEach((x) => x.classList.toggle('on', x === b));
+    box.querySelector('#aModel').value = S.models[agent]?.[0] || ''; fillRuntime();
+  });
+  fillRuntime();
+  box.querySelector('#aSave').onclick = async () => {
+    const model = box.querySelector('#aModel').value.trim() || S.models[agent]?.[0];
+    try {
+      await api('/api/seats', { id: isNew ? undefined : id, name: box.querySelector('#aName').value || 'Agent', role: box.querySelector('#aRole').value, agent, model, effort, perm: 'read', target: box.querySelector('#aTarget').value, budget: Number(box.querySelector('#aBudget').value) || 0, color: box.querySelector('#aColor').value });
+      closeOverlay(); toast(isNew ? 'Agent added' : 'Saved');
+    } catch {}
+  };
+  if (!isNew) {
+    box.querySelector('#aReset').onclick = async () => { await api(`/api/seats/${id}/reset`, {}); toast(`${s.name}: memory cleared`); closeOverlay(); };
+    box.querySelector('#aDel').onclick = async () => { if (confirm(`Delete ${s.name}?`)) { await api(`/api/seats/${id}/delete`, {}); closeOverlay(); } };
+  }
+}
+
+function openSettings() {
+  const notify = ls.get('ob.notify') === '1';
+  const box = overlay(`<div class="modal-h">Settings<button class="btn ghost icon" data-close aria-label="Close">${icon('x')}</button></div>
+    <div class="modal-b">
+      <div class="label">Agents reply in</div><input class="input" id="sLang" value="${esc(S.settings.lang || 'English')}" placeholder="English">
+      <div class="hint">Applies to new conversations (existing memories keep their language).</div>
+      <div class="label">Theme</div><div class="seg" id="sTheme">${['system', 'light', 'dark'].map((t) => `<button data-t="${t}" class="${(ls.get('ob.theme') || 'system') === t ? 'on' : ''}">${t[0].toUpperCase() + t.slice(1)}</button>`).join('')}</div>
+      <label class="check"><input type="checkbox" id="sNotify" ${notify ? 'checked' : ''}> Desktop notification when a session finishes or needs you</label>
+    </div>
+    <div class="modal-f"><button class="btn" data-close>Close</button></div>`);
+  box.querySelectorAll('[data-close]').forEach((b) => b.onclick = closeOverlay);
+  box.querySelectorAll('#sTheme button').forEach((b) => b.onclick = () => { box.querySelectorAll('#sTheme button').forEach((x) => x.classList.toggle('on', x === b)); applyTheme(b.dataset.t); });
+  const cb = box.querySelector('#sNotify');
+  cb.onchange = async () => {
+    let want = cb.checked;
+    if (want && 'Notification' in window && Notification.permission !== 'granted') {
+      if (await Notification.requestPermission() !== 'granted') { want = false; cb.checked = false; toast('Notifications are blocked by the browser'); }
+    }
+    ls.set('ob.notify', want ? '1' : '0');
+  };
+  const lang = box.querySelector('#sLang'); let savedLang = S.settings.lang || 'English';
+  const saveLang = async () => {
+    const val = lang.value.trim() || 'English'; if (val === savedLang) return;
+    savedLang = val;
+    try { await api('/api/settings', { lang: val }); toast('Language saved'); } catch { savedLang = null; }
+  };
+  lang.onblur = saveLang;
+  lang.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); saveLang(); } };
+}
+function applyTheme(t) { ls.set('ob.theme', t); if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
+applyTheme(ls.get('ob.theme') || 'system');
+
+function notify(title, body) {
+  if (ls.get('ob.notify') !== '1' || !('Notification' in window) || Notification.permission !== 'granted' || !document.hidden) return;
+  try { new Notification(title, { body }); } catch {}
+}
+
+/* ================= navigation ================= */
+function openRoom(id) {
+  S.active = id; ls.set('ob.room', id || '');
+  const app = $('#app'); app.classList.remove('show-side'); app.classList.toggle('no-ins', !id); if (!id) app.classList.remove('show-ins');
+  renderSessions(); id ? renderRoom() : renderHome(); renderInspector();
+}
+$('.brand').onclick = () => openRoom(null); $('.brand').style.cursor = 'pointer';
+$('#newBtn').onclick = () => openNew(newKind());
+$('#addAgent').onclick = () => openAgent(null);
+$('#settingsBtn').onclick = openSettings;
+$('#menuBtn').onclick = () => $('#app').classList.toggle('show-side');
+$('#insBtn').onclick = () => $('#app').classList.toggle('show-ins');
+
+/* ================= live events ================= */
+async function load() {
+  const st = await (await fetch('/api/state')).json();
+  Object.assign(S, { models: st.models, efforts: st.efforts, limits: st.limits || {}, settings: st.settings || {} });
+  S.seats = {}; S.order = []; st.seats.forEach((s) => { S.seats[s.id] = s; S.order.push(s.id); });
+  S.rooms = {}; st.rooms.forEach((r) => { S.rooms[r.id] = r; });
+  const prev = S.active, saved = ls.get('ob.room'); if (!S.rooms[S.active]) S.active = S.rooms[saved] ? saved : null;
+  $('#project').textContent = st.project; $('#project').title = st.project;
+  renderMeters(); renderSessions(); renderAgents();
+  if (S.active !== prev || !$('#feedInner')) return openRoom(S.active);
+  // reconnect to the same room: keep the feed (and its scroll), refresh what may have changed
+  const r = S.rooms[S.active];
+  renderRoomHead(); if ($('#composerArea')?.dataset.mode !== composerMode(r)) renderComposer();
+  r.messages.forEach((m) => paintMsg(m, false)); markResult(); renderInspector();
+}
+function connect() {
+  const es = new EventSource('/api/events');
+  es.onopen = () => { S.connected = true; renderConn(); };
+  es.onerror = () => { S.connected = false; renderConn(); };
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    switch (ev.t) {
+      case 'hello': return load();
+      case 'seat': {
+        const isNew = !S.seats[ev.seat.id]; S.seats[ev.seat.id] = ev.seat; if (isNew) S.order.push(ev.seat.id);
+        renderAgents(); scheduleInspector();
+        const r = S.rooms[S.active], m = r?.messages?.find((x) => x.streaming && x.seatId === ev.seat.id); if (m) paintMsg(m);
+        break;
+      }
+      case 'seatGone': delete S.seats[ev.id]; S.order = S.order.filter((x) => x !== ev.id); renderAgents(); break;
+      case 'room': {
+        const old = S.rooms[ev.room.id], r = S.rooms[ev.room.id] = { ...(old || { messages: [] }), ...ev.room };
+        if (old && old.status === 'running' && r.status !== 'running' && (r.kind !== 'dm' || document.hidden)) {
+          const msg = `${r.title}: ${STATUS[r.status] || r.status}`; toast(msg); notify('Orchestra Board', msg);
+        }
+        renderSessions();
+        if (r.id === S.active) {
+          // The POST that created a room can return before this event: build the view once it is known.
+          if (!$('#main .head')) renderRoom();
+          else { renderRoomHead(); if ($('#composerArea')?.dataset.mode !== composerMode(r)) renderComposer(); markResult(); }
+          scheduleInspector();
+        }
+        break;
+      }
+      case 'roomGone': delete S.rooms[ev.id]; if (S.active === ev.id) openRoom(null); else renderSessions(); break;
+      case 'msg': {
+        const r = S.rooms[ev.roomId]; if (!r) break; // unknown room: its 'room' event / next load brings it
+        const i = r.messages.findIndex((x) => x.id === ev.msg.id); if (i >= 0) r.messages[i] = ev.msg; else r.messages.push(ev.msg);
+        if (!ev.msg.streaming && tw[ev.msg.id] && !tw[ev.msg.id].pending) delete tw[ev.msg.id];
+        if (ev.roomId === S.active) { paintMsg(ev.msg); scheduleInspector(); }
+        break;
+      }
+      case 'delta': (tw[ev.runId] ||= { shown: '', pending: '' }).pending += ev.text; break;
+      case 'item': {
+        const box = document.querySelector(`#feedInner [data-id="${ev.runId}"] .tools`);
+        if (box && ev.kind === 'tool') { box.insertAdjacentHTML('beforeend', `<div>› ${esc(ev.text)}</div>`); while (box.children.length > 4) box.firstElementChild.remove(); }
+        break;
+      }
+      case 'limits': S.limits = ev.limits; renderMeters(); if (!S.active) renderHome(); break;
+      case 'settings': S.settings = ev.settings; break;
+    }
+  };
+}
+renderConn(); connect(); twLoop();
+</script>
+</body>
+</html>
