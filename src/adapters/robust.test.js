@@ -112,7 +112,8 @@ test('codex: unknown types, undefined text never becomes "undefined", error shap
 function fakeChild() {
   const c = new EventEmitter();
   c.stdout = new PassThrough(); c.stderr = new PassThrough(); c.stdin = new PassThrough();
-  c.pid = 4242; c.input = '';
+  // pid 0 is falsy: killTree() returns at once, so a fake child can never signal a real process (or a real tree).
+  c.pid = 0; c.input = '';
   c.stdin.on('data', (d) => { c.input += d; });
   c.out = (s) => c.stdout.write(s);
   c.close = (code = 0, signal = null) => setImmediate(() => c.emit('close', code, signal));

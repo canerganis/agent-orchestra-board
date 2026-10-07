@@ -159,8 +159,8 @@ const isDead = (pid) => { try { process.kill(pid, 0); return false; } catch (e) 
 // The pids a fake CLI call's process tree consists of, from its logged {pid, ppid}. On Windows the runner starts
 // the compiled shim (ppid) which starts node (pid), so both must die. On POSIX the sh wrapper `exec`s node, so
 // node keeps the wrapper's pid and its parent is the runner itself (this test process when the app runs
-// in-process): only the node pid belongs to the tree there.
-const treePids = (call) => (process.platform === 'win32' && call.ppid && call.ppid !== process.pid ? [call.pid, call.ppid] : [call.pid]);
+// in-process). A spawned long command (childPid) belongs to the tree on either platform.
+const treePids = (call) => [...(process.platform === 'win32' && call.ppid && call.ppid !== process.pid ? [call.pid, call.ppid] : [call.pid]), ...(call.childPid ? [call.childPid] : [])];
 const treeDead = (call) => treePids(call).every(isDead);
 
 // Path equality that survives Windows case differences, 8.3 names and symlinked temp dirs.

@@ -27,7 +27,7 @@ What the flag does:
 | Area | Lean (default) | Naive |
 | --- | --- | --- |
 | CLI token-trimming flags | `CLAUDE_TOKEN` / `CODEX_TOKEN` (`src/config.js`) | dropped (`--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, Codex `features.*=false` and `web_search`). The isolation flags stay in both arms (`CLAUDE_ISOLATION` / `CODEX_ISOLATION`: `--strict-mcp-config`, `--setting-sources ''`, `--ignore-user-config`, `features.hooks=false`), so user MCP servers, plugins and hooks are off in both. `-c windows.sandbox="unelevated"` stays in both as well |
-| Scout | optional, own thread, brief shared with everyone | ignored; every seat reads the code itself |
+| Scout | optional, own thread, brief shared with everyone; a Claude scout's brief runs on `claude-haiku-5-5` unless its model is overridden (not the seat model) | ignored; every seat reads the code itself |
 | Round 1 | `tools: 'none'` when a brief exists | read tools, target attached |
 | Rounds 2..N | unseen messages only, resumed per-room thread, no tools, effort capped at `medium`, silent agreement skips | full transcript every turn on a fresh CLI thread, read tools, no effort cap, nobody skips |
 | Early stop | when every seat says `STANCE: CONVERGED` | off: every planned round runs |
@@ -113,6 +113,7 @@ A planning meeting about the agent-orchestra-board repository itself (per-room t
 
 ## Limitations
 
+- **Scout model confound.** With the default seats the lean arm's scout is the first participant, a Claude seat, so its brief runs on `claude-haiku-5-5` while the seat itself may be `claude-sonnet-5-5`. The naive arm has no scout. The cost delta therefore includes a model change on that turn, not only the token levers. Before quoting a comparison, pin the scout to the seat model (set the scout's model override in *New session*, or use a Codex scout), or report the delta with and without that turn. `token-bench` does not record the scout model in its report; write it into the report header by hand.
 - Two boards are required because `ORCHESTRA_NAIVE` is read at server start; the script refuses one URL for both arms.
 - The script does not read CLI versions; record them by hand in the report header.
 - Cost is partial (Codex reports none). The script ships no price table; apply your own per-token prices to the per-agent uncached/cached columns if you need a dollar figure.

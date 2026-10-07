@@ -118,7 +118,8 @@ test('limits: rate_limit_event with missing fields keeps known windows; codex ro
   assert.deepEqual(limits.get().claude.windows, { five_hour: { pct: 50, resetsAt: 1759900000000 } });
   assert.equal(limits.get().claude.status, 'allowed_warning');
   limits.claudeLimits({ unifiedWindows: { seven_day: { utilization: 0.25 } } }); // no resetsAt
-  assert.deepEqual(limits.get().claude.windows, { seven_day: { pct: 25, resetsAt: null } });
+  // A partial event keeps the windows already known (five_hour stays), and updates only its own.
+  assert.deepEqual(limits.get().claude.windows, { five_hour: { pct: 50, resetsAt: 1759900000000 }, seven_day: { pct: 25, resetsAt: null } });
   const fs = require('fs');
   const f = path.join(process.env.OB_TEST_HOME, '.codex', 'sessions', '2026', '10', '08', 'rollout-x.jsonl');
   fs.mkdirSync(path.dirname(f), { recursive: true });
@@ -209,7 +210,8 @@ testWithFake(fake, 'stopping a seat while it waits to retry ends the turn as sto
 
 testWithFake(fake, 'lost thread: a fresh thread gets the role header, topic, scout brief and a recap, then the prompt; a system line records it (claude and codex)', async () => {
   fake.resetCalls();
-  fake.scenario({ default: { reply: 'ok' } });
+  // The replies must not be substrings of the turn prompts (the recap skips text the prompt already carries).
+  fake.scenario({ default: { reply: 'Round one answer.' } });
   const room = rooms.newRoom('meeting', 'Recovery', { topic: 'Robust recovery topic', seatIds: ['ada', 'bob'], rounds: 2 });
   rooms.userMsg(room, 'Robust recovery topic');
   rooms.post(room, { seatId: 'dee', name: 'Dee', round: 'scout', label: 'scout brief', text: 'BRIEF: src/a.js:1 holds the config.' });
@@ -220,7 +222,7 @@ testWithFake(fake, 'lost thread: a fresh thread gets the role header, topic, sco
   fake.scenario([{ resume: true, lostThread: true }, { seat: 'Ada', reply: 'Ada is back' }, { seat: 'Bob', reply: 'Bob is back' }]);
   const from = fake.calls().length;
   const a = await rooms.say(room, 'ada', 'Round 2: new messages since your last turn: Bob said ok', { round: 2, tools: 'none', withTarget: false });
-  const b = await rooms.say(room, 'bob', 'Round 2: Ada said Ada is back', { round: 2, tools: 'none', withTarget: false });
+  const b = await rooms.say(room, 'bob', 'Round 2: Ada reported back', { round: 2, tools: 'none', withTarget: false });
   assert.equal(a.ok, true); assert.equal(a.text, 'Ada is back'); assert.equal(a.recovered, true);
   assert.equal(b.ok, true); assert.equal(b.text, 'Bob is back');
   for (const [name, old] of [['Ada', oldAda], ['Bob', oldBob]]) {
@@ -230,10 +232,11 @@ testWithFake(fake, 'lost thread: a fresh thread gets the role header, topic, sco
     assert.ok(fresh.stdin.startsWith(`[You are "${name}" (Tester)`), 'role header first');
     assert.match(fresh.stdin, /Context recovery/);
     assert.match(fresh.stdin, /Meeting topic:\nRobust recovery topic/);
+    assert.equal((fresh.stdin.match(/Robust recovery topic/g) || []).length, 1, 'the topic is not repeated in the recap');
     assert.match(fresh.stdin, /Shared brief \(by Dee\):\nBRIEF: src\/a\.js:1/);
     assert.match(fresh.stdin, /Recap of the latest messages/);
     assert.ok(/Round 2/.test(fresh.stdin.slice(fresh.stdin.indexOf('Recap'))), 'the turn prompt comes after the recap');
-    assert.ok(fresh.stdin.trimEnd().endsWith(name === 'Ada' ? 'Bob said ok' : 'Ada said Ada is back'), 'prompt last');
+    assert.ok(fresh.stdin.trimEnd().endsWith(name === 'Ada' ? 'Bob said ok' : 'Ada reported back'), 'prompt last');
   }
   assert.ok(callsOf('Bob', from)[1].stdin.includes('Ada (round 2): Ada is back'), 'recap carries the latest messages');
   assert.notEqual(room.threads.ada, oldAda); assert.notEqual(room.threads.bob, oldBob);

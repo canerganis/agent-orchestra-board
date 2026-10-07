@@ -79,7 +79,7 @@ Rooms (a Debate, a Propose -> Review chain or a Direct chat) are the unit of per
 
 1. **Request.** A workflow (or a Direct chat message) calls `say(room, seatId, prompt, opts)` in `src/rooms.js`, which appends a streaming placeholder message and calls `runner.runSeat(seatId, prompt, opts)`. Turns for one seat queue; different seats run in parallel (Debate round 1).
 2. **Resolve.** The runner picks the tools mode: `opts.tools`, downgraded from `write` to `read` unless `seat.perm === 'write'`; with no `opts.tools` the seat's own permission applies. It resolves the target (working directory and prompt preface) unless `withTarget: false`, and finds the thread to resume.
-3. **Spawn.** The adapter builds the argument list. Claude: lean flags, `--tools` for the mode, `--session-id` for a new thread or `--resume` for an existing one. Codex: lean flags, model, effort, `sandbox_mode`, and on Windows `-c windows.sandbox="unelevated"` with a `PATH` without `WindowsApps`; no-tools turns run in `.orchestra/empty` so the shell tool has nothing to read. The runner (not the adapter) spawns the process: `platform.spawnResolved` resolves the binary on `PATH` (or `ORCHESTRA_*_BIN`) and starts it by absolute path.
+3. **Spawn.** The adapter builds the argument list. Claude: lean flags, `--tools` for the mode, `--session-id` for a new thread or `--resume` for an existing one. Codex: lean flags, model, effort, `sandbox_mode`, and on Windows `-c windows.sandbox="unelevated"` with a `PATH` without `WindowsApps`; no-tools turns run in `.orchestra/empty`. That is not a hard limit: the shell tool stays available and can read the project, so the prompt asks the seat not to use it. The runner (not the adapter) spawns the process: `platform.spawnResolved` resolves the binary on `PATH` (or `ORCHESTRA_*_BIN`) and starts it by absolute path.
 4. **Stream.** The CLI's JSONL stdout goes through the adapter parser, which emits normalized events (`thread`, `activity`, `delta`, `item`, `usage`, `rateLimit`, `completed`, `error`). The runner broadcasts `run`, `delta`, `item` and `end` over SSE, so the UI shows who is thinking, writing or running a command.
 5. **Account.** Tokens (uncached input + output), cached tokens and cost are added to the seat, the message and the room.
 6. **Return.** `{ok, text, tokens, cached, cost, error}` goes back to the workflow, which marks the transcript as seen for that seat **only if the turn succeeded**, so a crashed turn loses nothing.
@@ -98,19 +98,19 @@ A thread is the CLI's own resumable session (a Claude session id, a Codex thread
 
 ## Token-lean levers
 
-Each lever is always on in v0.1, unless `ORCHESTRA_NAIVE=1` is set (benchmark baseline only, see [bench/](../bench/README.md)). Measured effects are described in the [README](../README.md#token-savings) and the [measurements](measurements/2026-10-07/README.md); they come from one before/after run, not a benchmark, and the shares of the individual levers are not measured.
+Each lever is on by default in v0.1, unless `ORCHESTRA_NAIVE=1` is set (benchmark baseline only, see [bench/](../bench/README.md)). Measured effects are described in the [README](../README.md#token-savings) and the [measurements](measurements/2026-10-07/README.md); they come from one before/after run, not a benchmark, and the shares of the individual levers are not measured.
 
 | Lever | Where | Idea |
 | --- | --- | --- |
-| Lean CLI launch | `CLAUDE_LEAN` / `CODEX_LEAN` in `src/config.js` | no user plugins, MCP servers, skills, hooks, slash commands or extra tool families; per-call baseline Claude 36k -> 6.7k tokens and Codex 24k -> 15k on the owner's setup (a bare install saves less) |
-| Tools per mode | adapters, `meeting.js` | discussion rounds and synthesis run with no tools; the scout gets `Read`/`Grep`/`Glob`; round 1 has no tools when a scout brief exists |
+| Lean CLI launch | `CLAUDE_LEAN` / `CODEX_LEAN` in `src/config.js` | no user plugins, MCP servers, skills, hooks, slash commands or extra tool families; per-call baseline Claude 36k -> 6.7k tokens and Codex 24k -> 15k on the owner's setup (a bare install saves less; not reproducible from this repository, see README) |
+| Tools per mode | adapters, `meeting.js` | Claude discussion rounds and synthesis run with no tools; the scout gets `Read`/`Grep`/`Glob`; round 1 has no tools when a scout brief exists. Codex seats keep a read-only shell in those turns (cwd `.orchestra/empty`), which is not enforced |
 | Scout brief in its own thread | `meeting.js` | files are read once and shared, not once per seat |
 | Per-room threads, unseen-only transcripts | `runner.js`, `meeting.js` | each turn carries only the delta |
 | Early stop, silent agreement | `meeting.js` | stop when all seats say `STANCE: CONVERGED`; skip a converged seat whose new messages are all converged |
 | Effort cap | `meeting.js` (`capEffort`) | discussion rounds run at most `medium` effort unless `settings.capEffort` is false |
-| Scout default model | `meeting.js`, `rooms.js` | a Claude scout's brief runs on `claude-haiku-5-5` unless the scout has a session model override; its other turns keep the seat model |
+| Scout default model | `meeting.js`, `rooms.js` | a Claude scout's brief runs on `claude-haiku-5-5` unless the scout has a session model override; its other turns keep the seat model. The id is not verified against the real CLI and has no fallback (the usage probe does) |
 | Net vs cached accounting | `runner.js`, adapters | `tokens` = uncached input + output, `cached` separate; `cost` is the CLI-reported spend (Claude only) |
-| Per-seat token budgets | `runner.js` | a seat stops once it used its allowance |
+| Per-seat token budgets (opt-in, not a lever) | `runner.js` | off by default (`budget: 0` = unlimited). Checked before each turn or retry, so a turn that starts under the limit can finish over it. `used` counts over the seat's lifetime across rooms, not per meeting |
 
 Trade-off, stated in [ADR 0002](decisions/0002-scout-brief-and-unseen-only-transcripts.md): only the scout reads code, so a shallow or wrong brief misleads every seat, and the `file:line` citations in later rounds are copied from the brief, not re-checked.
 
@@ -119,7 +119,7 @@ Trade-off, stated in [ADR 0002](decisions/0002-scout-brief-and-unseen-only-trans
 The board listens on `127.0.0.1` and drives CLIs that can read, and for `write` seats edit, the project. The attacker it defends against is therefore a web page in the user's browser, not a network peer. The full threat model is the header of `src/security.js`; the user-facing summary is [SECURITY.md](../SECURITY.md).
 
 - **Host and Origin allowlist.** `Host` must be exactly `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>` (DNS rebinding); any `Origin` must be one of those (cross-site requests).
-- **Session token.** A random per-project token lives in `<project>/.orchestra/session` (mode 0600), is printed in the start URL, is exchanged for an `HttpOnly; SameSite=Strict` cookie and is required on every `/api/*` request. A generated `.orchestra/.gitignore` keeps it out of git.
+- **Session token.** A random per-project token lives in `<project>/.orchestra/session` (mode 0600 on POSIX; on Windows the file inherits the project folder's ACL, so keep the project under your user profile), is printed in the start URL, is exchanged for an `HttpOnly; SameSite=Strict` cookie and is required on every `/api/*` request. A generated `.orchestra/.gitignore` keeps it out of git.
 - **Validated JSON only.** Every `POST` is `application/json`, size-capped and field-checked. Static files are served only from `public/`; responses carry a strict CSP and `no-store`.
 - **Read-only by default.** Seats start with `perm: read`: Claude gets `--tools Read Grep Glob --permission-mode dontAsk`, Codex `sandbox_mode=read-only`. Read-only is enforced by the vendors' CLIs, not by the board. v0.1 has no write option in the UI; enabling write is a deliberate edit of `seats.json` or an authenticated `POST /api/seats` ([ADR 0004](decisions/0004-read-only-v0-1.md)).
 - **Targets stay inside the project.** `target.js` resolves a seat's target with `realpath` and rejects `..`, absolute paths and symlinks pointing out.

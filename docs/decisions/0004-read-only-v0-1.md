@@ -19,7 +19,7 @@ Every seat starts with `perm: 'read'` (`src/config.js`). The runner maps a turn 
 
 | Seat / turn | Claude | Codex |
 | --- | --- | --- |
-| `none` (discussion, synthesis, round 1 with a brief) | `--tools '' --permission-mode dontAsk` | `sandbox_mode="read-only"`, cwd `.orchestra/empty` |
+| `none` (discussion, synthesis, round 1 with a brief) | `--tools '' --permission-mode dontAsk` | `sandbox_mode="read-only"`, cwd `.orchestra/empty`; the shell tool stays available and is only asked not to be used (not enforced) |
 | `read` (default seat) | `--tools Read Grep Glob --permission-mode dontAsk` (a tool outside the list is denied, not prompted); no shell tool, so no write path | `sandbox_mode="read-only"` (its shell can still read outside the project) |
 | `write` (user opt-in per seat) | `--tools Read Grep Glob Edit Write --permission-mode acceptEdits` | `sandbox_mode="workspace-write"` |
 

@@ -4,7 +4,7 @@ const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
-const { tmpDir, waitFor, startApp, testWithFake, treeDead, treePids, teardown } = require('./helpers');
+const { tmpDir, waitFor, startApp, testWithFake, isDead, treeDead, treePids, teardown } = require('./helpers');
 const { setupFakeCli } = require('./fake-cli');
 
 const PORT = 4394;
@@ -21,16 +21,18 @@ before(async () => {
 });
 after(() => teardown(ctx, dir));
 
-// Windows: shim (ppid) and node (pid) must both die; POSIX: node has the exec'd wrapper's pid and its parent is this process.
+// Every PID must die, including the command that inherits the CLI's stdout/stderr.
 const dead = (call) => waitFor(() => treeDead(call), { timeout: 10000, what: `fake CLI tree (${treePids(call).join(' > ')}) to die` });
 
 testWithFake(fake, 'direct chat: stop kills the running turn (error "stopped"), the seat cannot be deleted while running, the DM room goes idle', async () => {
-  fake.scenario({ default: { hang: true } });
+  fake.scenario({ default: { hang: true, spawnChild: true } });
   const sse = await ctx.sse();
   assert.deepEqual((await ctx.post('/api/seats/ada/stop')).json, { ok: false }, 'nothing to stop yet');
   const send = await ctx.post('/api/seats/ada/send', { text: 'hello there' });
   assert.deepEqual(send.json, { roomId: 'dm-ada' });
   const [call] = await fake.waitCalls((c) => c.seat === 'Ada');
+  assert.ok(call.childPid, 'the fake CLI spawned a long command');
+  assert.equal(isDead(call.childPid), false, 'the command is alive before Stop');
   assert.equal(call.stdin.endsWith('hello there'), true);
   const working = await waitFor(async () => { const s = await ctx.seat('ada'); return s.status === 'working' && s; }, { what: 'seat working' });
   assert.equal(working.roomId, 'dm-ada'); assert.ok(working.startedAt);
@@ -53,7 +55,7 @@ testWithFake(fake, 'direct chat: stop kills the running turn (error "stopped"), 
 
 testWithFake(fake, 'direct chat room stop: the running turn is killed and the queued one is cancelled without ever spawning', async () => {
   fake.resetCalls();
-  fake.scenario({ default: { hang: true } });
+  fake.scenario({ default: { hang: true, spawnChild: true } });
   assert.deepEqual((await ctx.post('/api/seats/bob/send', { text: 'first' })).json, { roomId: 'dm-bob' });
   assert.deepEqual((await ctx.post('/api/seats/bob/send', { text: 'second' })).json, { roomId: 'dm-bob' });
   const [call] = await fake.waitCalls((c) => c.seat === 'Bob');
@@ -70,7 +72,7 @@ testWithFake(fake, 'direct chat room stop: the running turn is killed and the qu
 
 testWithFake(fake, 'meeting stop: running turns die with "stopped", later rounds never start, the room is stopped and logged', async () => {
   fake.resetCalls();
-  fake.scenario({ default: { hang: true } });
+  fake.scenario({ default: { hang: true, spawnChild: true } });
   const sse = await ctx.sse();
   const { json: { roomId } } = await ctx.post('/api/meeting', { topic: 'Stop me', seatIds: ['ada', 'bob'], rounds: 2 });
   const calls = await fake.waitCalls((c) => /Round 1 of 2/.test(c.stdin), 2);
@@ -94,7 +96,7 @@ testWithFake(fake, 'meeting stop: running turns die with "stopped", later rounds
 
 testWithFake(fake, 'deleting a running room stops its turns, removes the file and broadcasts roomGone', async () => {
   fake.resetCalls();
-  fake.scenario({ default: { hang: true } });
+  fake.scenario({ default: { hang: true, spawnChild: true } });
   const sse = await ctx.sse();
   const { json: { roomId } } = await ctx.post('/api/chain', { task: 'Delete me', builderId: 'ada', reviewerId: 'bob', maxRounds: 1 });
   const [call] = await fake.waitCalls((c) => c.seat === 'Ada');

@@ -16,6 +16,7 @@
 //                   warn (stderr text) and noise (a non-JSON stdout line) before a successful turn,
 //                   crash (stderr text; exits without a completed turn), exit (exit code), gate (name: wait for
 //                   <OB_FAKE_DIR>/gates/<name> before answering), delayMs, hang (never finishes),
+//                   spawnChild (with hang: long command inheriting stdout/stderr; logs childPid),
 //                   lostThread (the resumed thread is gone: prints the CLI's own not-found message on stderr, no
 //                   stdout, exit 1, like claude --resume / codex exec resume with an unknown id)
 //
@@ -151,10 +152,28 @@ async function main() {
   const { rule, index } = pickRule(scenario, { agent: a.agent, seat, nth, prompt, resume: !!a.resume });
   const reply = rule.reply ?? 'ok';
 
+  let childPid = null;
+  if (rule.hang && rule.spawnChild) {
+    const child = require('child_process').spawn(process.execPath,
+      ['-e', 'setInterval(() => {}, 1000); process.send("ready");'],
+      { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], windowsHide: true });
+    // Publish the call only after the child is running, so a Stop cannot race fixture startup.
+    await new Promise((resolve, reject) => { child.once('message', resolve); child.once('error', reject); });
+    childPid = child.pid;
+    if (process.platform !== 'win32') {
+      // Reap the child before exiting, avoiding zombies on hosts whose PID 1 does not reap orphans.
+      // This handler does not forward signals: a main-PID-only kill leaves the command alive and hangs.
+      process.on('SIGTERM', () => {
+        if (child.exitCode !== null || child.signalCode !== null) process.exit(0);
+        else child.once('exit', () => process.exit(0));
+      });
+    }
+  }
+
   fs.appendFileSync(path.join(DIR, 'calls.jsonl'), JSON.stringify({
     n: prev.length + 1, nth, agent: a.agent, seat, thread, resume: !!a.resume, args, cwd: process.cwd(), stdin: prompt,
     model: a.model, effort: a.effort, tools: a.tools, permissionMode: a.permissionMode, sandbox: a.sandbox, addDir: a.addDir,
-    rule: index, pid: process.pid, ppid: process.ppid, ts: new Date().toISOString(),
+    rule: index, pid: process.pid, ppid: process.ppid, childPid, ts: new Date().toISOString(),
   }) + '\n');
 
   if (rule.lostThread) {

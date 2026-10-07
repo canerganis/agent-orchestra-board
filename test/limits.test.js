@@ -10,19 +10,25 @@ const { createStore } = require('../src/store');
 const { createLimits } = require('../src/limits');
 
 let dir, home, store, events, limits;
-const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CODEX_HOME: process.env.CODEX_HOME };
 
 before(() => {
   dir = tmpDir('ob-limits-'); home = path.join(dir, 'home');
   fs.mkdirSync(home, { recursive: true });
   // os.homedir() reads USERPROFILE on Windows and HOME elsewhere.
   process.env.HOME = home; process.env.USERPROFILE = home;
+  delete process.env.CODEX_HOME;
   assert.equal(path.resolve(os.homedir()), path.resolve(home), 'home dir must be redirected for this test file');
   store = createStore(path.join(dir, 'project')); store.ensure();
   events = [];
   limits = createLimits({ store, broadcast: (e) => events.push(e) });
 });
-after(() => { Object.assign(process.env, savedHome); rmrf(dir); });
+after(() => {
+  for (const [key, value] of Object.entries(savedHome)) {
+    if (value === undefined) delete process.env[key]; else process.env[key] = value;
+  }
+  rmrf(dir);
+});
 
 test('initial state: no limits known, nothing persisted', () => {
   assert.deepEqual(limits.get(), { claude: null, codex: null });
@@ -43,7 +49,9 @@ test('claudeLimits: unifiedWindows become {pct (one decimal), resetsAt in ms}; s
 test('claudeLimits: without unifiedWindows the single rateLimitType window is used; overage flag is boolean', () => {
   limits.claudeLimits({ status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.905, resetsAt: 7, isUsingOverage: 1 });
   const c = limits.get().claude;
-  assert.deepEqual(c.windows, { seven_day: { pct: 90.5, resetsAt: 7000 } });
+  // A partial event updates its own window and keeps the windows already known (here five_hour from the test above).
+  assert.deepEqual(c.windows.seven_day, { pct: 90.5, resetsAt: 7000 });
+  assert.ok(c.windows.five_hour, 'known five_hour window is kept');
   assert.equal(c.status, 'allowed_warning'); assert.equal(c.overage, true);
 });
 

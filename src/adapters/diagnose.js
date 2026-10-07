@@ -53,7 +53,7 @@ function explainExit({ agent, bin, code, signal, stats = {}, stderr = '', versio
   if (!stats.json) return `${name} CLI printed no JSON (${exit}; output format changed?)${why || (stats.lastNoise ? `: ${stats.lastNoise}` : '')}`;
   // A handler that threw is our bug, not a schema change: the feeder does not count such lines as events, so check it first.
   if (stats.handlerErrors) return `${name} CLI output could not be processed${ver}: ${stats.lastHandlerError}`;
-  if (!stats.events) return `Unrecognised ${name} CLI output${ver}: ${stats.json} JSON line(s) of unknown type${stats.unknownTypes?.length ? ` [${stats.unknownTypes.join(', ')}]` : ''}. The CLI's JSON schema may have changed; update Orchestra Board${why}`;
+  if (!stats.events) return `Unrecognised ${name} CLI output${ver}: ${stats.json} JSON line(s) of unknown type${stats.unknownTypes?.length ? ` [${stats.unknownTypes.join(', ')}]` : ''}. The CLI's JSON schema may have changed; update Agent Orchestra Board${why}`;
   return `${name} CLI ended (${exit}) before reporting a result${stats.unknown ? ` (${stats.unknown} unknown event(s): ${stats.unknownTypes.join(', ')})` : ''}${why}`;
 }
 

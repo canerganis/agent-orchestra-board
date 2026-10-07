@@ -21,7 +21,8 @@ function createChain({ store, seats, rooms, broadcast }) {
       const doIt = propose ? 'You cannot modify files: propose the change concretely (files, exact edits or a patch). End with a short summary.' : 'Do the task. End with a short summary of what you changed.';
       // Notes the user posted into the room since the builder's last turn.
       const notes = room.messages.filter((m) => m.seatId === 'user' && !m.consumed && m !== room.messages[0]);
-      notes.forEach((m) => { m.consumed = true; });
+      // Marked consumed only once the builder's turn has succeeded (below): a failed or stopped turn leaves them for
+      // the closing "Not delivered" pass.
       const noteText = notes.length ? `\n\nNotes from the user:\n${notes.map((m) => '- ' + m.text).join('\n')}` : '';
       const b = await say(room, builderId, r === 1
         ? `Task:\n${task}${ctx}${noteText}\n\n${doIt}`
@@ -29,16 +30,22 @@ function createChain({ store, seats, rooms, broadcast }) {
       if (room.stopped) break;
       // A builder that cannot run (missing CLI, crash) is an error, not a review that ran out of rounds.
       if (!b.ok) { builderFailed = true; sys(room, `${builder.name} failed: ${b.error}`); break; }
+      notes.forEach((m) => { m.consumed = true; }); // the builder read them
       const diff = propose ? '' : gitDiff(resolveTarget(builder, store.project).cwd);
       // Notes posted while the builder worked go to the reviewer.
       const rNotes = room.messages.filter((m) => m.seatId === 'user' && !m.consumed && m !== room.messages[0]);
-      rNotes.forEach((m) => { m.consumed = true; });
       const rNoteText = rNotes.length ? `\n\nNotes from the user:\n${rNotes.map((m) => '- ' + m.text).join('\n')}` : '';
-      const rv = await say(room, reviewerId, `Review ${builder.name}'s latest ${propose ? 'proposal' : 'work'} on this task:\n${task}\n\n--- ${builder.name} output ---\n${b.text}\n---${diff ? `\n\n--- changes ---\n${diff}\n---` : ''}${rNoteText}\n\nList at most 3 BLOCKER, 3 SHOULD-FIX and 3 NIT findings. FAIL only if a BLOCKER exists. The last line must be exactly "VERDICT: PASS" or "VERDICT: FAIL".`,
+      // The reviewer's thread already holds the task after round 1: later rounds do not send it again.
+      const reviewerHasTask = !!room.threads?.[reviewerId];
+      const intro = reviewerHasTask
+        ? `Review the revised ${propose ? 'proposal' : 'work'} from ${builder.name} for the same task (round ${r}).`
+        : `Review ${builder.name}'s latest ${propose ? 'proposal' : 'work'} on this task:\n${task}`;
+      const rv = await say(room, reviewerId, `${intro}\n\n--- ${builder.name} output ---\n${b.text}\n---${diff ? `\n\n--- changes ---\n${diff}\n---` : ''}${rNoteText}\n\nList at most 3 BLOCKER and 3 SHOULD-FIX findings; add at most 3 NIT only when the verdict is PASS. FAIL only if a BLOCKER exists. The last line must be exactly "VERDICT: PASS" or "VERDICT: FAIL".`,
         { round: r, label: 'review', withTarget: !diff });
       if (room.stopped) break;
       // A review that could not run is not a FAIL verdict: stop with an error instead of looping on empty feedback.
       if (!rv.ok) { reviewerFailed = true; sys(room, `${reviewer.name} failed: ${rv.error}`); break; }
+      rNotes.forEach((m) => { m.consumed = true; }); // the reviewer read them
       // Only a successful review whose last non-empty line is exactly the verdict counts as PASS.
       passed = rv.ok && /^VERDICT:\s*PASS$/i.test(lastLine(rv.text));
       if (rv.msg) { // absent only when the reviewer was deleted mid-chain
@@ -47,7 +54,8 @@ function createChain({ store, seats, rooms, broadcast }) {
         if (live(room)) broadcast({ t: 'msg', roomId: room.id, msg: rv.msg }); saveRoom(room);
       }
       if (passed) break;
-      feedback = rv.text;
+      // NITs are not acted on by the builder (it addresses BLOCKER and SHOULD-FIX only): they are not forwarded.
+      feedback = rv.text.split(/\r?\n/).filter((l) => !/^\s*(?:[-*]\s*)?\**\s*NIT\b/i.test(l)).join('\n').trim() || rv.text;
       if (escalate && r < maxRounds) { const next = bump(builder.agent, effort); if (next !== effort) { effort = next; sys(room, `⚡ ${builder.name} effort raised → ${effort}`); } }
     }
     room.status = room.stopped ? 'stopped' : passed ? 'passed' : builderFailed || reviewerFailed ? 'error' : 'needs-you';

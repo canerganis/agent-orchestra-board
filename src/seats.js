@@ -2,11 +2,28 @@
 const { MODELS, EFFORTS, COLORS, PERSISTED, defaultSeats } = require('./config');
 
 function createSeats({ store, broadcast }) {
-  let seats = store.readJson('seats.json') || defaultSeats();
+  // A missing seats.json means first run (defaults). An unreadable one is NOT silently replaced: it is copied aside
+  // (seats.json.corrupt-<time>) first, so threads, budgets and usage can be recovered by hand.
+  function loadSeats() {
+    const raw = store.read('seats.json');
+    if (raw === null) return defaultSeats();
+    try { const v = JSON.parse(raw); if (Array.isArray(v)) return v; throw new Error('not a list of agents'); }
+    catch (e) {
+      const bak = `seats.json.corrupt-${Date.now()}`;
+      try { store.write(bak, raw); } catch {}
+      console.error(`orchestra-board: seats.json is unreadable (${e.message}); kept a copy as .orchestra/${bak} and started with the default agents.`);
+      return defaultSeats();
+    }
+  }
+  let seats = loadSeats();
   const rt = new Map(); // seat id -> runtime { status, activity, startedAt, child, queue, roomId }
   const rtOf = (id) => { if (!rt.has(id)) rt.set(id, { status: 'idle', activity: '', startedAt: null, child: null, queue: Promise.resolve() }); return rt.get(id); };
   const seatById = (id) => seats.find((s) => s.id === id);
-  function saveSeats() { store.writeJson('seats.json', seats.map((s) => Object.fromEntries(PERSISTED.map((k) => [k, s[k] ?? null])))); }
+  // Persisting must never throw into a turn's completion (a locked file on Windows): the in-memory state stays current.
+  function saveSeats() {
+    try { store.writeJson('seats.json', seats.map((s) => Object.fromEntries(PERSISTED.map((k) => [k, s[k] ?? null])))); }
+    catch (e) { console.error(`orchestra-board: could not save seats.json: ${e.message}`); }
+  }
   function publicSeat(s) { const r = rtOf(s.id); return { ...s, status: r.status, activity: r.activity, startedAt: r.startedAt, roomId: r.roomId || null }; }
   function setRt(id, patch) { Object.assign(rtOf(id), patch); const s = seatById(id); if (s) broadcast({ t: 'seat', seat: publicSeat(s) }); }
 
@@ -27,7 +44,7 @@ function createSeats({ store, broadcast }) {
     // A thread belongs to one CLI, and its first message fixed the role, permission and scope: reset on change.
     const perm = b.perm === 'write' ? 'write' : 'read', target = String(b.target ?? s.target ?? '').trim();
     if ((s.agent && s.agent !== agent) || (s.perm && s.perm !== perm) || (s.target ?? '') !== target
-      || (b.role !== undefined && s.role !== undefined && b.role !== s.role) || (b.name !== undefined && s.name !== undefined && b.name !== s.name)) s.thread = null;
+      || (b.role !== undefined && s.role !== undefined && b.role !== s.role) || (b.name !== undefined && s.name !== undefined && b.name !== s.name)) dropThread(s);
     Object.assign(s, {
       name: String(b.name ?? s.name ?? agent).slice(0, 24), role: String(b.role ?? s.role ?? '').slice(0, 40),
       agent, model, effort, perm: b.perm === 'write' ? 'write' : 'read',
@@ -38,10 +55,20 @@ function createSeats({ store, broadcast }) {
     return s;
   }
 
-  function resetThread(seat) { seat.thread = null; saveSeats(); broadcast({ t: 'seat', seat: publicSeat(seat) }); }
-  function removeSeat(seat) { seats = seats.filter((s) => s !== seat); saveSeats(); broadcast({ t: 'seatGone', id: seat.id }); }
+  // threadGen (in memory only, never persisted) changes whenever a seat's thread is dropped. A turn still running then
+  // must not write its old thread id back when it ends (runner.js compares the generation it started with).
+  function dropThread(seat) { seat.thread = null; seat.threadGen = (seat.threadGen || 0) + 1; }
+  function resetThread(seat) { dropThread(seat); saveSeats(); broadcast({ t: 'seat', seat: publicSeat(seat) }); }
+  // The runtime entry goes too, unless a turn still runs on it: a recreated seat with the same id must not inherit
+  // the old queue, retry wait or stop flag.
+  function removeSeat(seat) {
+    seats = seats.filter((s) => s !== seat); saveSeats();
+    const r = rt.get(seat.id);
+    if (r && !r.child && r.status !== 'working' && !r.retryWait) rt.delete(seat.id);
+    broadcast({ t: 'seatGone', id: seat.id });
+  }
 
-  return { all: () => seats, rtOf, seatById, saveSeats, publicSeat, setRt, upsertSeat, resetThread, removeSeat };
+  return { all: () => seats, rtOf, seatById, saveSeats, publicSeat, setRt, upsertSeat, resetThread, removeSeat, dropThread };
 }
 
 module.exports = { createSeats };

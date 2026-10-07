@@ -152,7 +152,7 @@ function codexSandboxCheck() {
   if (!WIN) return check('codexSandbox', 'Codex Windows sandbox', 'skip', 'Windows only');
   const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   const cfg = codexSandboxSetting(path.join(home, 'config.toml'));
-  const launch = 'Orchestra Board launches Codex with -c windows.sandbox="unelevated"';
+  const launch = 'Agent Orchestra Board launches Codex with -c windows.sandbox="unelevated"';
   if (!cfg.exists) return check('codexSandbox', 'Codex Windows sandbox', 'ok', `no config.toml in ${home}; ${launch}`);
   if (cfg.value === null) return check('codexSandbox', 'Codex Windows sandbox', 'ok', `config.toml sets no windows.sandbox; ${launch}`);
   if (cfg.value === 'unelevated') return check('codexSandbox', 'Codex Windows sandbox', 'ok', `config.toml windows.sandbox = "unelevated" (matches the board's launch flag)`);
@@ -194,10 +194,10 @@ function portCheck(port, running) {
 }
 
 function projectCheck(projectDir) {
-  let st; try { st = fs.statSync(projectDir); } catch { return check('project', 'Project', 'fail', `${projectDir} does not exist`, 'Pass an existing directory: orchestra-board <projectDir>'); }
+  let st; try { st = fs.statSync(projectDir); } catch { return check('project', 'Project', 'fail', `${projectDir} does not exist`, 'Pass an existing directory: agent-orchestra-board <projectDir>'); }
   if (!st.isDirectory()) return check('project', 'Project', 'fail', `${projectDir} is not a directory`);
   const git = fs.existsSync(path.join(projectDir, '.git'));
-  return check('project', 'Project', 'ok', `${projectDir}${git ? ' (git repository)' : ' (not a git repository: Propose -> Review cannot show diffs)'}`);
+  return check('project', 'Project', 'ok', `${projectDir}${git ? ' (git repository)' : ' (not a git repository)'}`);
 }
 
 // Write access for <project>/.orchestra without changing the filesystem: a probe file (removed again) goes into

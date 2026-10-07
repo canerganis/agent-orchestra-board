@@ -90,8 +90,9 @@ function installShutdown(app) {
     if (stopping) { console.error('\nForced exit.'); process.exit(130); }
     stopping = true;
     console.error(`\n${signal}: stopping the board (Ctrl+C again to force)...`);
+    // stopWork first: no new CLI turn starts (queued and retrying turns end as stopped), rooms stop, running children die.
     let killed = 0;
-    try { for (const s of app.seats.all()) if (app.runner.stopSeat(s.id)) killed++; } catch {}
+    try { killed = app.stopWork(); } catch {}
     if (killed) console.error(`  stopped ${killed} running agent turn${killed === 1 ? '' : 's'}`);
     const bye = () => process.exit(0);
     const t = setTimeout(bye, 3000); t.unref();

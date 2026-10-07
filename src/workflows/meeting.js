@@ -36,9 +36,10 @@ function createMeeting({ store, seats, rooms, settings = {} }) {
     const seen = Object.fromEntries(everyone.map((id) => [id, new Set(room.messages.map((m) => m.id))]));
     const markOwn = () => everyone.forEach((id) => room.messages.filter((m) => m.seatId === id).forEach((m) => seen[id].add(m.id)));
     // Messages count as seen only after the seat's turn succeeds, so a failed turn does not lose them.
-    const unseen = (id) => room.messages.filter((m) => !m.streaming && m.text && m.seatId !== id && m.seatId !== 'system' && !seen[id].has(m.id));
+    // A failed turn's text (a partial stream) is never forwarded: it is not a contribution.
+    const unseen = (id) => room.messages.filter((m) => !m.streaming && m.text && !m.error && m.seatId !== id && m.seatId !== 'system' && !seen[id].has(m.id));
     // Naive baseline: everything said so far (own messages too: the turn runs on a fresh thread).
-    const transcript = () => room.messages.filter((m, i) => i > 0 && !m.streaming && m.text && m.seatId !== 'system');
+    const transcript = () => room.messages.filter((m, i) => i > 0 && !m.streaming && m.text && !m.error && m.seatId !== 'system');
     const fmt = (ms) => ms.map((m) => `${m.seatId === 'user' ? 'User (the human running this meeting)' : m.name}: ${m.text}`).join('\n\n');
     const hasThread = (id) => !!room.threads?.[id];
     const converged = (text) => /^STANCE:\s*CONVERGED$/i.test(lastLine(text));
@@ -49,7 +50,9 @@ function createMeeting({ store, seats, rooms, settings = {} }) {
     const noteFailure = (id, round, res) => {
       if (res.ok || res.error === 'stopped' || room.stopped) return;
       failures.push({ name: nameOf(id), round, error: clip(res.error || 'failed', 140) });
-      if ((res.failure === 'auth' || res.error === 'no such agent') && !out.has(id) && seatIds.includes(id)) {
+      // 'unavailable': the CLI could not be launched at all (missing binary, shim); retrying it only bills nothing but
+      // failed messages, so it sits out like an auth failure.
+      if ((res.failure === 'auth' || res.failure === 'unavailable' || res.error === 'no such agent') && !out.has(id) && seatIds.includes(id)) {
         out.add(id);
         sys(room, `${nameOf(id)} cannot run (${clip(res.error || 'failed', 160)}) and sits out the rest of this debate; the others continue.`, { seatOut: { seatId: id, round } });
       }
@@ -58,7 +61,7 @@ function createMeeting({ store, seats, rooms, settings = {} }) {
     let brief = '';
     if (scoutId) {
       room.round = 'scout'; pushRoom(room);
-      const res = await say(room, scoutId, `Scout task for a meeting. Topic:\n${topic}${ctx}\n\nRead only what is relevant inside your target scope. Write a factual brief for the other participants (max 350 words): key facts, relevant files with file:line, constraints, unknowns. No opinions or recommendations.`, { round: 'scout', label: 'scout brief', tools: 'read', threadKey: scoutId + ':scout', model: seatById(scoutId)?.agent === 'claude' ? CLAUDE_CHEAP_MODEL : null }); // turn-only default; a session override on the seat wins // own thread: the files it read must not ride along in later rounds
+      const res = await say(room, scoutId, `Scout task for a meeting. Topic:\n${topic}${ctx}\n\nRead only what is relevant inside your target scope. Write a factual brief for the other participants (max 350 words): key facts, relevant files with file:line, constraints, unknowns. No opinions or recommendations.`, { round: 'scout', label: 'scout brief', tools: 'read', threadKey: scoutId + ':scout', effort: capEffort(scoutId, 'medium', room), model: seatById(scoutId)?.agent === 'claude' ? CLAUDE_CHEAP_MODEL : null }); // turn-only default; a session override on the seat wins // own thread: the files it read must not ride along in later rounds
       if (res.ok && res.text) brief = res.text;
       else if (!room.stopped && res.error !== 'stopped') sys(room, `Scout ${nameOf(scoutId)} failed (${clip(res.error || 'no brief', 160)}); round 1 runs without a brief and reads the code itself.`);
       // The brief goes into round 1 prompts; user notes posted meanwhile stay unseen so round 2 delivers them.
@@ -79,7 +82,8 @@ function createMeeting({ store, seats, rooms, settings = {} }) {
       room.round = r; pushRoom(room);
       const stances = [];
       const active = seatIds.filter((id) => !out.has(id));
-      if (!active.length) break;
+      // One seat left has nobody to answer: the debate goes straight to synthesis instead of paying for a monologue.
+      if (active.length < 2) break;
       for (const id of active) {
         if (room.stopped) break;
         let res;
@@ -88,10 +92,13 @@ function createMeeting({ store, seats, rooms, settings = {} }) {
             { round: r, label: 'discussion', tools: 'read', withTarget: true, threadKey: `${id}:r${r}` });
         } else {
           const fresh = unseen(id);
+          // Nothing new for this seat (its peers' turns failed or were skipped): no billed turn, the stance carries over.
+          if (!fresh.length) { stances.push(!!lastStance[id]); continue; }
           // Silent agreement: a converged seat skips its turn when everything new is also converged.
           if (lastStance[id] && fresh.length && fresh.every((m) => converged(m.text))) { sys(room, `✓ ${seatById(id)?.name} agreed silently (turn skipped).`, { skip: { seatId: id, round: r } }); stances.push(true); continue; }
           res = await say(room, id, `${hasThread(id) ? '' : background()}Round ${r} of ${rounds}. New messages since your last turn:\n\n${fmt(fresh) || '(nothing new)'}\n\nRespond as in a live meeting: build on, challenge (name who and why) or merge. Max 120 words. End with exactly one line: "STANCE: CONVERGED" if you would sign the current direction, otherwise "STANCE: OPEN".`,
             { round: r, label: 'discussion', tools: 'none', withTarget: false, effort: capEffort(id, 'medium', room) });
+          // Not marked seen on failure: a failed turn may not have stored the prompt, and a repeated message is cheaper than a lost one.
           if (res.ok) fresh.forEach((m) => seen[id].add(m.id));
         }
         noteFailure(id, r, res);

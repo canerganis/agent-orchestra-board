@@ -24,7 +24,9 @@ const PERSISTED = ['id', 'name', 'role', 'agent', 'model', 'effort', 'perm', 'ta
 // TOKEN levers only trim the prompt and are what ORCHESTRA_NAIVE=1 turns off.
 const CLAUDE_ISOLATION = ['--strict-mcp-config', '--setting-sources', ''];
 const CLAUDE_TOKEN = ['--disable-slash-commands', '--exclude-dynamic-system-prompt-sections'];
-const CODEX_ISOLATION = ['--ignore-user-config', '-c', 'features.hooks=false'];
+// project_doc_max_bytes=0: no project AGENTS.md (from the git root down to the cwd) is injected into a seat's thread.
+// $CODEX_HOME/AGENTS.md is NOT covered by any flag here (--ignore-user-config skips only config.toml): see README.
+const CODEX_ISOLATION = ['--ignore-user-config', '-c', 'features.hooks=false', '-c', 'project_doc_max_bytes=0'];
 const CODEX_TOKEN = [...['apps', 'browser_use', 'computer_use', 'image_generation', 'multi_agent', 'memories', 'plugins']
   .flatMap((f) => ['-c', `features.${f}=false`]), '-c', 'web_search="disabled"'];
 const CODEX_LEAN = [...CODEX_ISOLATION, ...CODEX_TOKEN];

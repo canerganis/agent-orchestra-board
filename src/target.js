@@ -68,7 +68,8 @@ function resolveTarget(seat, project) {
 // Changes inside the target directory only, including new (untracked) files.
 function gitDiff(dir) {
   const git = (args) => { try { return execFileResolved('git', args, { cwd: dir, encoding: 'utf8', maxBuffer: 4e6, windowsHide: true }); } catch { return ''; } };
-  const diff = git(['diff', 'HEAD', '--', '.']);
+  // --no-ext-diff / --no-textconv: a repository's own config (diff.external, textconv filters) must never run a command.
+  const diff = git(['diff', '--no-ext-diff', '--no-textconv', '--no-color', 'HEAD', '--', '.']);
   const added = git(['ls-files', '--others', '--exclude-standard', '--', '.']).trim();
   return (diff + (added ? `\nNew files:\n${added}\n` : '')).slice(0, 30000).trim();
 }

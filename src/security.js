@@ -42,8 +42,13 @@ const TOKEN_RE = /^[A-Za-z0-9_-]{32}$/;
 function loadOrCreateToken(file) {
   const fs = require('fs');
   const path = require('path');
-  try { const t = fs.readFileSync(file, 'utf8').trim(); if (TOKEN_RE.test(t)) return t; } catch {}
   const t = newToken();
+  // A symlink at the session path (a cloned repo can carry one) is never followed: neither read nor written. The
+  // token then lives in memory for this process only.
+  let linked = false;
+  try { linked = fs.lstatSync(file).isSymbolicLink() || fs.lstatSync(path.dirname(file)).isSymbolicLink(); } catch {}
+  if (linked) return t;
+  try { const cur = fs.readFileSync(file, 'utf8').trim(); if (TOKEN_RE.test(cur)) return cur; } catch {}
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, t + '\n', { mode: 0o600 });

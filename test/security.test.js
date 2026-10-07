@@ -30,7 +30,7 @@ test('session token: start URL carries ?t=<token>; the exchange sets an HttpOnly
   const sc = String(ok.headers['set-cookie']);
   assert.match(sc, new RegExp(`^ob_session_${PORT}=${ctx.token}; Path=/; HttpOnly; SameSite=Strict`));
   const bad = await raw('GET', '/?t=not-the-token');
-  assert.equal(bad.status, 403); assert.deepEqual(bad.json, { error: 'bad session token' });
+  assert.equal(bad.status, 403); assert.match(bad.text, /out of date/); assert.equal(bad.json, null); // a page with the way out, not raw JSON
   // Same length, one char off: constant-time compare must still reject.
   const flipped = ctx.token.slice(0, -1) + (ctx.token.endsWith('a') ? 'b' : 'a');
   assert.equal((await raw('GET', `/?t=${flipped}`)).status, 403);

@@ -47,7 +47,8 @@ function searchPlan(bin, env) {
   if (explicit) { const abs = path.resolve(bin); return { dirs: [path.dirname(abs)], name: path.basename(abs) }; }
   const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path');
   // A relative PATH entry (".", "bin") is resolved against the board's own cwd, never the child's.
-  return { dirs: (env[pathKey] || '').split(path.delimiter).filter(Boolean).map((d) => path.resolve(d)), name: bin };
+  // Entries may be wrapped in double quotes (a PATH set as "C:\Program Files\nodejs"): strip them before resolving.
+  return { dirs: (env[pathKey] || '').split(path.delimiter).map((d) => d.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean).map((d) => path.resolve(d)), name: bin };
 }
 
 function walk(dirs, name, exts, keep) {
@@ -112,7 +113,8 @@ function spawnResolved(cmd, args = [], opts = {}) {
   const env = childEnv(opts.env);
   const exe = resolveExe(cmd, opts.env || process.env);
   if (!exe) return failedChild(cmd, args, 'ENOENT');
-  return child_process.spawn(exe, args, { ...opts, env });
+  // POSIX children lead their own process group so Stop also reaches commands that inherit their pipes.
+  return child_process.spawn(exe, args, { ...opts, env, ...(!WIN ? { detached: true } : {}) });
 }
 
 // execFileSync() with the same resolution; throws ENOENT (like Node) when `cmd` resolves to nothing.
@@ -123,11 +125,14 @@ function execFileResolved(cmd, args = [], opts = {}) {
   return child_process.execFileSync(exe, args, { ...opts, env: childEnv(opts.env) });
 }
 
-// Kill a CLI child and everything it spawned (Windows: taskkill /T /F; elsewhere SIGTERM).
+// Kill a CLI child and everything it spawned (Windows: taskkill /T /F; POSIX: SIGTERM to its process group).
 function killTree(child) {
   if (!child || !child.pid) return;
   if (WIN) spawnResolved('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
-  else child.kill('SIGTERM');
+  else {
+    try { process.kill(-child.pid, 'SIGTERM'); }
+    catch (e) { if (e.code !== 'ESRCH') throw e; } // already exited
+  }
 }
 
 module.exports = { codexEnv, killTree, resolveBin, resolveShims, resolveExe, spawnResolved, execFileResolved, isExecutableFile, NO_CWD_VAR };

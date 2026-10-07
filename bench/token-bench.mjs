@@ -368,7 +368,7 @@ async function preflight(args, boards, log) {
   for (const name of ['lean', 'naive']) if ((states[name].rooms || []).some((r) => r.status === 'running')) problems.push(`a room is still running on the ${name} board; stop it or wait`);
   const pick = (opt, name) => { if (opt === 'none') return null; const v = opt || ids[0]; if (!ids.includes(v)) problems.push(`--${name} '${v}' must be one of the participants`); return v; };
   args.scoutId = pick(args.scout, 'scout'); args.synthId = pick(args.synth, 'synth');
-  if (!args.scoutId) warnings.push('lean arm runs WITHOUT a scout (--scout none): the biggest single lever is off, so this measures the other levers only');
+  if (!args.scoutId) warnings.push('lean arm runs WITHOUT a scout (--scout none): the scout brief lever is off (its share is unmeasured), so this measures the other levers only');
   if (states.lean.project !== states.naive.project) warnings.push(`the boards point at different project dirs (${states.lean.project} vs ${states.naive.project}): fine if they are clones of the same commit`);
   else warnings.push('both boards share one project dir and therefore one .orchestra/ state dir: ok for a benchmark, but do not use the UI on both at the same time');
   for (const w of warnings) log(`  warning: ${w}`);

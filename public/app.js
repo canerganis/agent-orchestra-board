@@ -83,6 +83,35 @@ const kindIcon = (k) => KIND_ICON[k] || 'chat';
 const KIND = { meeting: 'Debate', chain: 'Propose → Review', dm: 'Direct chat' };
 const isAgentMsg = (m) => m && m.seatId !== 'system' && m.seatId !== 'user';
 
+/* ================= keyboard focus and pointer-safe re-renders =================
+   Live events re-render regions of the page. A replaced button loses keyboard focus, and one replaced between
+   mousedown and mouseup swallows the click, so: (1) focus is put back on the same control (matched by its id or
+   data-* key) after a re-render, and (2) while a pointer is down, re-renders are deferred until it is released. */
+const FOCUS_SEL = '[id],[data-seat],[data-room],[data-jump]';
+function focusKey(el) {
+  if (!el || !el.dataset) return null;
+  if (el.id) return '#' + el.id;
+  for (const k of ['seat', 'room', 'jump']) if (el.dataset[k]) return k + ':' + el.dataset[k];
+  return null;
+}
+const findByKey = (root, key) => key && [...root.querySelectorAll(FOCUS_SEL)].find((el) => focusKey(el) === key) || null;
+// Runs fn (a region re-render) and restores focus to the same control when focus was inside the region.
+function keepFocus(root, fn) {
+  const act = document.activeElement, inside = !!root && !!act && act !== root && root.contains(act);
+  const key = inside ? focusKey(act) : null;
+  fn();
+  if (!key || !root) return;
+  const next = findByKey(root, key);
+  if (next && typeof next.focus === 'function') next.focus({ preventScroll: true });
+}
+let pointerDown = false; const deferred = new Set();
+const releasePointer = () => { if (!pointerDown) return; pointerDown = false; const fns = [...deferred]; deferred.clear(); fns.forEach((f) => f()); };
+document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
+document.addEventListener('pointerup', releasePointer, true);
+document.addEventListener('pointercancel', releasePointer, true);
+// True (and the render is queued) while a pointer is held: the render runs on release instead.
+const deferRender = (fn) => { if (!pointerDown) return false; deferred.add(fn); return true; };
+
 /* ================= top bar ================= */
 const WIN = { five_hour: '5-hour', seven_day: 'Weekly', seven_day_opus: 'Weekly Opus', seven_day_sonnet: 'Weekly Sonnet' };
 function countdown(ms) { if (!ms) return ''; let s = Math.max(0, Math.round((ms - Date.now()) / 1000)); const d = Math.floor(s / 86400); s %= 86400; const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; }
@@ -101,7 +130,8 @@ const pctTxt = (p) => p.toFixed(p < 10 ? 1 : 0) + '%';
 let meterPop = false;
 // Failures recorded by the limits module (failed Haiku probe, missing CLI, API-key login without usage windows).
 const limitErrors = () => Object.entries(S.limits || {}).filter(([, l]) => l && l.error).map(([agent, l]) => ({ agent, error: String(l.error), at: l.errorAt }));
-function renderMeters() {
+function renderMeters() { if (deferRender(renderMeters)) return; keepFocus($("#meters"), paintMeters); }
+function paintMeters() {
   const groups = meterGroups(), errs = limitErrors(), errOf = (agent) => errs.find((e) => e.agent === agent);
   const summary = [];
   // Each CLI shows its fullest window; every window is in the popover.
@@ -139,8 +169,12 @@ function budgetWarning() {
   if (!w || !c.updated || Date.now() - new Date(c.updated) > 6 * 3600e3) return null;
   return w.pct >= 80 ? w.pct : null;
 }
+// Only a change of state repaints the badge: a re-render would make the polite live region announce it again on every retry.
+let connPainted = null;
 function renderConn() {
-  $('#conn').innerHTML = `<span class="dot ${S.connected ? 'ok' : 'fail'}" aria-hidden="true"></span><span class="txt">${S.connected ? 'Connected' : 'Reconnecting'}</span>${S.connected ? '' : '<span class="sr-only">Live updates disconnected</span>'}`;
+  if (connPainted === S.connected) return;
+  connPainted = S.connected;
+  $('#conn').innerHTML =`<span class="dot ${S.connected ? 'ok' : 'fail'}" aria-hidden="true"></span><span class="txt">${S.connected ? 'Connected' : 'Reconnecting'}</span>${S.connected ? '' : '<span class="sr-only">Live updates disconnected</span>'}`;
   $('#conn').title = S.connected ? `Live updates connected to ${location.host}` : 'Live updates disconnected — reconnecting';
 }
 
@@ -166,7 +200,8 @@ function sessionRow(r) {
   return `<div role="listitem"><button class="srow" data-room="${esc(r.id)}" ${on ? 'aria-current="page"' : ''}>
     <span class="srow-ico" aria-hidden="true">${icon(kindIcon(r.kind), 14)}</span><span class="srow-title">${esc(r.title)}</span><span class="srow-sub">${sub}</span>${acc}</button></div>`;
 }
-function renderSessions() {
+function renderSessions() { if (deferRender(renderSessions)) return; keepFocus($("#sessions"), paintSessions); }
+function paintSessions() {
   const q = (S.query || '').trim().toLowerCase();
   const all = Object.values(S.rooms).sort((a, b) => String(b.created).localeCompare(String(a.created)));
   const list = q ? all.filter((r) => `${r.title} ${r.topic || ''} ${r.task || ''}`.toLowerCase().includes(q)) : all;
@@ -179,7 +214,8 @@ function renderSessions() {
   $('#sessions').innerHTML = html || `<div class="group"><div class="side-empty">${q ? 'No matching sessions' : 'No sessions yet'}</div></div>`;
   $$('#sessions [data-room]').forEach((el) => el.onclick = () => openRoom(el.dataset.room));
 }
-function renderAgents() {
+function renderAgents() { if (deferRender(renderAgents)) return; keepFocus($("#agents"), paintAgents); }
+function paintAgents() {
   const running = S.order.filter((id) => S.seats[id]?.status === 'working').length;
   $('#agentsCount').textContent = running ? `${running} running` : S.order.length ? String(S.order.length) : '';
   $('#agents').innerHTML = S.order.map((id) => {
@@ -227,8 +263,10 @@ const FIX_HINT = {
 };
 const FIX_URL = { codexInstall: 'https://github.com/openai/codex/releases', claudeInstall: 'https://claude.com/claude-code' };
 // A warn on a CLI check means the board cannot launch that CLI (shim-only install, --version timed out or failed,
-// a project file shadowing the binary): agents would fail on every turn, so it blocks like a fail.
+// or a non-zero exit): agents would fail on every turn, so it blocks like a fail. A same-named file in the project
+// is only a note (doctor says "The board ignores it"): the CLI still runs from PATH, so it never blocks.
 const CLI_CHECK = (c) => /^(claude|codex)$/i.test(c.id) || /\bCLI\b/.test(c.name);
+const CWD_SHADOW_NOTE = /The board ignores it\b/;
 // Tolerant normalisation: the doctor module decides the exact check shape; the UI only needs name, state, detail, fix.
 function normChecks(raw) {
   let arr = Array.isArray(raw) ? raw : Array.isArray(raw?.checks) ? raw.checks : [];
@@ -245,7 +283,7 @@ function normChecks(raw) {
     // Which CLI a check is about (null for Node, logins, port, ...): decides whether a failure can block at all.
     n.cli = /^claude$/i.test(n.id) || /claude cli/i.test(n.name) ? 'claude' : /^codex$/i.test(n.id) || /codex cli/i.test(n.name) ? 'codex' : null;
     // Raw verdict for the CLI as found; whether it actually blocks depends on the seats (isBlocking, at render time).
-    n.blocking = n.st === 'fail' || (n.st === 'warn' && !n.skipped && CLI_CHECK(n));
+    n.blocking = n.st === 'fail' || (n.st === 'warn' && !n.skipped && CLI_CHECK(n) && !CWD_SHADOW_NOTE.test(`${n.detail} ${n.hint}`));
     if (n.blocking && n.st === 'warn' && !n.hint) n.hint = `The board cannot use this CLI as found. Re-check; if it keeps failing, point ${/codex/i.test(n.id + n.name) ? 'ORCHESTRA_CODEX_BIN' : 'ORCHESTRA_CLAUDE_BIN'} at a working native executable (.exe) and restart the board.`;
     // The doctor's own hint always wins; a guess is a fallback for a check that explains nothing.
     if (n.st !== 'ok' && !n.fix && !n.hint) { const g = guessFix(n); if (g) { n.fix = FIX[g] || ''; n.fixNote = n.fix ? FIX_NOTE[g] || '' : ''; n.hint = FIX_HINT[g] || ''; if (!n.url && !n.fix) n.url = FIX_URL[g] || ''; } }
@@ -382,17 +420,28 @@ function renderRoom() {
   $('#main').innerHTML = `<div class="main-head"></div><div class="resultbar" id="resultBar" hidden></div>
     <div class="transcript" id="feed" role="region" aria-label="Transcript" tabindex="-1"><div class="thread" id="feedInner"></div></div>
     <div class="composer-wrap" id="composerArea"></div>`;
+  // A running session opens at the latest turn (to follow it); a finished one opens at the top (the result bar jumps).
+  const f = $('#feed'); pinned = r.status === 'running';
+  f.addEventListener('scroll', () => { pinned = nearBottom(f); }, { passive: true });
   renderRoomHead(); renderResultBar(); renderComposer();
   r.messages.forEach((m) => paintMsg(m, false));
   if (!r.messages.length) $('#feedInner').innerHTML = '<div class="thread-empty">No messages yet.</div>';
   decorate();
-  // A running session opens at the latest turn (to follow it); a finished one opens at the top (the result bar jumps).
-  const f = $('#feed'); f.scrollTop = r.status === 'running' ? f.scrollHeight : 0;
+  f.scrollTop = pinned ? f.scrollHeight : 0;
 }
+// Auto-follow: the transcript follows new output only while the reader is at its bottom. The flag is set by the reader's
+// own scrolling, never measured after new content has already grown the feed (that measure drifts past the threshold).
+let pinned = false;
+const nearBottom = (f) => f.scrollHeight - f.scrollTop - f.clientHeight < 140;
+function follow() { const f = $('#feed'); if (f && pinned) f.scrollTop = f.scrollHeight; }
 // Elapsed time: ticking while running, else first message to the last finished turn.
 function roomEnd(r) { let end = 0; for (const m of r.messages) { const t = new Date(m.ended || m.ts).getTime(); if (t > end) end = t; } return end || new Date(r.created).getTime(); }
 // Repaints only the header: title, status, mode, round, elapsed, Stop, Export, Delete.
 function renderRoomHead() {
+  if (deferRender(renderRoomHead)) return;
+  keepFocus($('#main .main-head'), paintRoomHead);
+}
+function paintRoomHead() {
   const r = S.rooms[S.active], h = $('#main .main-head'); if (!r || !h) return;
   const total = r.kind === 'meeting' ? r.rounds : r.kind === 'chain' ? r.maxRounds : null;
   const live = r.status === 'running', dm = r.kind === 'dm';
@@ -476,22 +525,32 @@ function exportTranscript(r) {
 }
 // Composer for Direct chat and running sessions; a next-step bar for finished Debate / Propose → Review.
 const composerMode = (r) => r.kind === 'dm' ? 'dm' : r.status === 'running' ? 'live' : 'done';
+const drafts = {}; // unsent note per room: kept across room switches, and when its session ends under the user's cursor
+function keepDraft(id, text) { if (!id) return; if (text && text.trim()) drafts[id] = text; else delete drafts[id]; }
 function renderComposer() {
   const r = S.rooms[S.active], el = $('#composerArea'); if (!r || !el) return;
   const mode = composerMode(r); el.dataset.mode = mode;
+  const typed = $('#compose')?.value.trim() || '';
   if (mode === 'done') {
-    el.innerHTML = `<div class="nextbar"><span>Session finished</span><button class="btn" id="nbAgain">Run again</button><button class="btn primary" id="nbDm">Continue in Direct chat</button></div>`;
+    // A note typed while the session ran is kept: the next bar offers to copy it, so the session ending never drops it.
+    if (typed) drafts[r.id] = typed;
+    const kept = drafts[r.id] && r.status !== 'running' ? drafts[r.id] : '';
+    const hadFocus = el.contains(document.activeElement);
+    el.innerHTML = `<div class="nextbar"><span>Session finished</span>${kept ? `<button class="btn" data-copy="${esc(kept)}" data-copy-msg="Unsent note copied" title="Copy the note you were typing">${icon('copy', 14)}Copy unsent note</button>` : ''}<button class="btn" id="nbAgain">Run again</button><button class="btn primary" id="nbDm">Continue in Direct chat</button></div>`;
     $('#nbAgain').onclick = () => openNew(r.kind, roomPreset(r));
     $('#nbDm').onclick = () => continueInDm(r);
+    if (hadFocus) $('#nbDm').focus({ preventScroll: true });
     return;
   }
-  const draft = $('#compose')?.value || ''; // keep what the user is typing across re-renders
+  // What the user is typing survives a re-render (the live textarea) and a room switch (the drafts map); it goes only after a send.
+  const live = $('#compose'), draft = live && live.dataset.room === r.id ? live.value : (drafts[r.id] || '');
   const placeholder = mode === 'dm' ? `Message ${S.seats[r.seatId]?.name || 'agent'}…` : 'Add a note for the next agent turn…';
   el.innerHTML = `<div class="composer">
       <textarea id="compose" rows="1" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" aria-describedby="composeKeys"></textarea>
       <div class="composer-tools"><span class="send-hint" aria-hidden="true"><kbd>Enter</kbd></span><span class="sr-only" id="composeKeys">Enter sends, Shift+Enter adds a new line.</span><button class="btn primary" id="sendBtn">Send</button></div>
     </div>`;
   const ta = $('#compose');
+  ta.dataset.room = r.id;
   if (draft) { ta.value = draft; ta.focus(); grow(ta); }
   ta.oninput = () => grow(ta);
   // An IME (Japanese, Chinese, Korean) confirms a candidate with Enter: never send a half-composed message.
@@ -499,10 +558,13 @@ function renderComposer() {
   $('#sendBtn').onclick = send;
 }
 function grow(ta) { ta.style.height = '28px'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; }
+// Repaints only the bubbles whose result state changed: a repaint rebuilds the text, which would drop a selection or focus.
 function markResult() {
-  const r = S.rooms[S.active];
-  $$('#feedInner .entry.result').forEach((el) => { if (el.dataset.id !== r?.resultId) { el.classList.remove('result'); const m = findMsg(el.dataset.id); if (m) paintMsg(m, false); } });
-  if (r?.resultId) { const m = findMsg(r.resultId); if (m) paintMsg(m, false); }
+  const r = S.rooms[S.active], inner = $('#feedInner'); if (!r || !inner) return;
+  $$('#feedInner .entry.result').forEach((el) => { if (el.dataset.id !== r.resultId) { el.classList.remove('result'); const m = findMsg(el.dataset.id); if (m) paintMsg(m, false); } });
+  if (!r.resultId) return;
+  const el = inner.querySelector(`[data-id="${CSS.escape(r.resultId)}"]`);
+  if (!el || !el.classList.contains('result')) { const m = findMsg(r.resultId); if (m) paintMsg(m, false); }
 }
 // The jump target keeps a static highlight (no flash animation) until the next jump.
 function jumpTo(id) {
@@ -529,7 +591,8 @@ async function send() {
   try {
     if (r.kind === 'dm') await api(`/api/seats/${r.seatId}/send`, { text });
     else { await api(`/api/rooms/${r.id}/say`, { text }); toast('Note added — the next agent turn will read it'); }
-    const cur = $('#compose'); if (cur && cur.value.trim() === text) { cur.value = ''; grow(cur); }
+    if (S.active === r.id) { const cur = $('#compose'); if (cur && cur.value.trim() === text) { cur.value = ''; grow(cur); } }
+    if (drafts[r.id]?.trim() === text) delete drafts[r.id]; // the note that was sent is no longer a draft
   } catch {} finally { const b = $('#sendBtn'); if (b) b.disabled = false; }
 }
 
@@ -558,7 +621,9 @@ function msgHeadHtml(m, r) {
   const verdict = m.verdict ? `<span class="vt ${m.verdict === 'pass' ? 'pass' : 'fail'}">${icon(m.verdict === 'pass' ? 'check' : 'x', 12)}${m.verdict === 'pass' ? 'PASS' : 'FAIL'}</span>` : '';
   const resTag = isResult ? `<span class="rtag">${r.kind === 'chain' ? 'Result' : 'Synthesis'}</span>` : '';
   let stat;
-  if (m.streaming) stat = `<span class="msg-stat act" title="${esc(s?.activity || '')}">${esc(s?.activity || 'starting')}…</span>`;
+  const lost = !!(tw[m.id]?.gap || tw[m.id]?.gapped);
+  if (m.streaming && lost) stat = `<span class="msg-stat act" title="The connection dropped while this reply was being written. The full text appears when it ends.">Connection lost · full text at the end</span>`;
+  else if (m.streaming) stat = `<span class="msg-stat act" title="${esc(s?.activity || '')}">${esc(s?.activity || 'starting')}…</span>`;
   else {
     const parts = [m.tokens ? `${fmtTok(m.tokens)} tok` : '', m.ended ? fmtDur(new Date(m.ended) - new Date(m.ts)) : ''].filter(Boolean);
     const tip = [`Finished ${hhmm(m.ended || m.ts)}`, m.cached ? `${fmtTok(m.cached)} cached` : '', m.cost ? '$' + m.cost.toFixed(3) : '', m.effort ? (EFFORT[m.effort] || m.effort) + ' effort' : '', m.tools === 'none' ? 'no tools' : ''].filter(Boolean).join(' · ');
@@ -567,11 +632,13 @@ function msgHeadHtml(m, r) {
   const acts = !m.streaming && m.text ? `<span class="mact"><button class="icon-btn" data-copy-msg="${isResult ? 'Result copied as Markdown' : 'Message copied'}" data-copy="${esc(isResult ? resultMd(r, m) : cleanText(m.text))}" title="Copy as Markdown" aria-label="Copy ${esc(m.name)}'s message as Markdown">${icon('copy', 14)}</button></span>` : '';
   return `${who}${model}${role}${verdict}${resTag}${stat}${acts}`;
 }
+// What a bubble shows for a message: a reconnect skips the repaint of a finished message whose key did not change.
+const msgKey = (m, r) => [m.streaming ? 1 : 0, (m.text || '').length, m.error || '', m.verdict || '', m.ended || '', m.tokens || 0, m.id === r.resultId ? 1 : 0].join('|');
 function paintMsg(m, scroll = true) {
   const inner = $('#feedInner'), r = S.rooms[S.active]; if (!inner || !r?.messages.some((x) => x.id === m.id)) return;
   inner.querySelector('.thread-empty')?.remove();
   let el = inner.querySelector(`[data-id="${CSS.escape(m.id)}"]`);
-  const f = $('#feed'), near = f.scrollHeight - f.scrollTop - f.clientHeight < 140;
+  const f = $('#feed');
   if (!el) {
     const msgs = r.messages, i = msgs.findIndex((x) => x.id === m.id), prev = msgs.slice(0, i).reverse().find(isAgentMsg);
     if (wantsMarker(r, m) && (!prev || String(prev.round) !== String(m.round)) && !inner.querySelector(`.round[data-round="${CSS.escape(String(m.round))}"]`)) {
@@ -586,12 +653,16 @@ function paintMsg(m, scroll = true) {
   el.classList.toggle('result', isResult);
   el.querySelector('.msg-head').innerHTML = msgHeadHtml(m, r);
   const c = el.querySelector('.content'), st = tw[m.id];
-  if (m.streaming) { if (!st || (!st.shown && !st.pending)) c.innerHTML = '<span class="sr-only">Writing…</span><span class="caret" aria-hidden="true"></span>'; }
+  if (m.streaming) {
+    // Text already revealed (a room switch, a reconnect or a rebuilt feed) comes back from the buffer, not as a blank bubble.
+    if (st?.shown) { if (!c.textContent.trim()) { c.classList.add('raw'); c.textContent = st.shown; c.insertAdjacentHTML('beforeend', '<span class="caret" aria-hidden="true"></span>'); } }
+    else if (!st || !st.pending) c.innerHTML = '<span class="sr-only">Writing…</span><span class="caret" aria-hidden="true"></span>';
+  }
   else if (!st || !st.pending) {
     c.classList.remove('raw'); c.innerHTML = md(cleanText(m.text)) + (m.error ? `<div class="err" role="alert">${icon('x', 12)}<span>${esc(m.error)}</span></div>` : '');
   }
-  if (scroll && near) f.scrollTop = f.scrollHeight;
-  if (scroll) decorateSoon();
+  if (scroll) { follow(); decorateSoon(); }
+  el.dataset.k = msgKey(m, r);
 }
 // Reveal streamed text progressively; Codex delivers whole messages at once.
 function twLoop() {
@@ -600,7 +671,7 @@ function twLoop() {
     const n = Math.max(3, Math.ceil(st.pending.length / 12));
     st.shown += st.pending.slice(0, n); st.pending = st.pending.slice(n);
     const el = document.querySelector(`#feedInner [data-id="${CSS.escape(id)}"] .content`);
-    if (el) { el.classList.add('raw'); el.textContent = st.shown; el.insertAdjacentHTML('beforeend', '<span class="caret" aria-hidden="true"></span>'); const f = $('#feed'); if (f && f.scrollHeight - f.scrollTop - f.clientHeight < 160) f.scrollTop = f.scrollHeight; }
+    if (el) { el.classList.add('raw'); el.textContent = st.shown; el.insertAdjacentHTML('beforeend', '<span class="caret" aria-hidden="true"></span>'); follow(); }
     if (!st.pending) { const m = findMsg(id); if (m && !m.streaming) paintMsg(m); }
   }
   requestAnimationFrame(twLoop);
@@ -659,7 +730,11 @@ function decorate() {
     }
     el.querySelector('.desc').textContent = roundDesc(r, key, ms, running);
   });
-  if (r.kind !== 'meeting') return;
+  if (r.kind === 'meeting') verdictBlocks(r, inner);
+  // Inserted blocks and markers grow the feed: a reader who was following the latest turn stays at the bottom.
+  follow();
+}
+function verdictBlocks(r, inner) {
   const rounds = [...new Set(r.messages.filter(isAgentMsg).map((m) => m.round).filter((x) => typeof x === 'number'))];
   for (const n of rounds) {
     const v = roundVerdict(r, n); let el = inner.querySelector(`.vblock-entry[data-verdict="${n}"]`);
@@ -707,6 +782,10 @@ function nodeHtml(n) {
   return `<li>${m ? `<button class="node ${n.state}" data-jump="${esc(m.id)}" title="${esc(tip)}">${inner}</button>` : `<div class="node ${n.state}" title="${esc(tip)}">${inner}</div>`}</li>`;
 }
 function renderInspector() {
+  if (deferRender(renderInspector)) return;
+  keepFocus($('#inspector'), paintInspector);
+}
+function paintInspector() {
   const ins = $('#inspector'); const r = S.rooms[S.active];
   if (!r) { ins.innerHTML = ''; return; } // Home: no inspector (#app.no-ins)
   const steps = [];
@@ -762,12 +841,20 @@ function tickTimers() {
 setInterval(tickTimers, 1000);
 
 /* ================= overlays (dialogs) ================= */
-let lastFocus = null, overlayOpts = {};
-function closeOverlay() { if (!$('#overlay').children.length) return; $('#overlay').innerHTML = ''; overlayOpts = {}; const f = lastFocus; lastFocus = null; if (f && f.isConnected && typeof f.focus === 'function') f.focus(); }
+let lastFocus = null, lastFocusKey = null, overlayOpts = {};
+function closeOverlay() {
+  if (!$('#overlay').children.length) return;
+  $('#overlay').innerHTML = ''; overlayOpts = {};
+  const f = lastFocus, key = lastFocusKey; lastFocus = null; lastFocusKey = null;
+  if (f && f.isConnected && typeof f.focus === 'function') return f.focus();
+  // The opener was re-rendered while the dialog was open (e.g. an agent row after an edit): focus its replacement.
+  const again = findByKey(document, key);
+  if (again) again.focus({ preventScroll: true });
+}
 // Escape / scrim: never throw away a dialog that has typed text (Cancel / X still close it).
 function softClose() { if (overlayOpts.locked) return; const m = $('#overlay [role="dialog"]'); if (m && $$('textarea', m).some((t) => t.value.trim())) return; closeOverlay(); }
 function overlay(html, cls = 'modal', opts = {}) {
-  lastFocus = document.activeElement; overlayOpts = opts;
+  lastFocus = document.activeElement; lastFocusKey = focusKey(lastFocus); overlayOpts = opts;
   $('#overlay').innerHTML = `<div class="scrim"></div><div class="${cls}" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">${html}</div>`;
   $('#overlay .scrim').onclick = softClose;
   const box = $('#overlay .' + cls.split(' ')[0]);
@@ -1140,6 +1227,8 @@ function notify(title, body) {
 
 /* ================= navigation ================= */
 function openRoom(id) {
+  // The room being left keeps its unsent note: its view is about to be replaced, and the note lives only in that textarea.
+  const cur = $('#compose'); if (cur?.dataset.room) keepDraft(cur.dataset.room, cur.value);
   S.active = id; ls.set('ob.room', id || '');
   const app = $('#app'); setPanel('show-side', false); app.classList.toggle('no-ins', !id); if (!id) setPanel('show-ins', false);
   renderSessions(); id ? renderRoom() : renderHome(); renderInspector();
@@ -1162,11 +1251,29 @@ $('#search').addEventListener('keydown', (e) => { if (e.key === 'Enter') { const
 
 /* ================= live events ================= */
 let doctorOnce = false;
+// Events that arrive while a snapshot is being fetched are held and replayed on top of it, so the older snapshot
+// never overwrites a newer event (a final message, a finished room, an idle seat). 'hello' is never held.
+let loadBusy = 0; const held = [];
+function dispatch(ev) {
+  const h = ev && Object.prototype.hasOwnProperty.call(SSE, ev.t) ? SSE[ev.t] : null;
+  if (!h) return;
+  try { h(ev); } catch (err) { console.warn(`orchestra: could not apply "${ev.t}" event`, err); }
+}
 async function load() {
+  loadBusy++;
+  try { await applySnapshot(); }
+  finally { loadBusy--; if (!loadBusy) for (const ev of held.splice(0)) dispatch(ev); }
+}
+async function applySnapshot() {
   const st = await api('/api/state');
   Object.assign(S, { models: st.models || {}, efforts: st.efforts || {}, limits: st.limits || {}, settings: st.settings || {} });
   S.seats = {}; S.order = []; (st.seats || []).forEach((s) => { S.seats[s.id] = s; S.order.push(s.id); });
+  const before = S.rooms;
   S.rooms = {}; (st.rooms || []).forEach((r) => { S.rooms[r.id] = { messages: [], ...r }; });
+  // A reply still streaming that started before this connection lost its earlier deltas: it waits for its final text.
+  for (const r of Object.values(S.rooms)) for (const m of r.messages) if (m.streaming && new Date(m.ts) < connectedAt) (tw[m.id] ||= { shown: '', pending: '' }).gap = true;
+  // The server lists only the newest 25 sessions: an open session beyond them stays open (its events still update it).
+  if (S.active && !S.rooms[S.active] && before[S.active]) S.rooms[S.active] = before[S.active];
   const prev = S.active, saved = ls.get('ob.room'); if (!S.rooms[S.active]) S.active = S.rooms[saved] ? saved : null;
   $('#project').textContent = st.project || ''; $('#project').title = st.project ? `Project: ${st.project}` : '';
   renderMeters(); noteLimitErrors(true); renderSessions(); renderAgents();
@@ -1176,7 +1283,14 @@ async function load() {
   // reconnect to the same room: keep the feed (and its scroll), refresh what may have changed
   const r = S.rooms[S.active];
   renderRoomHead(); renderResultBar(); if ($('#composerArea')?.dataset.mode !== composerMode(r)) renderComposer();
-  r.messages.forEach((m) => paintMsg(m, false)); markResult(); decorate(); renderInspector();
+  // Repaint only the bubbles whose content changed since they were last painted.
+  const inner = $('#feedInner');
+  for (const m of r.messages) {
+    const el = inner?.querySelector(`[data-id="${CSS.escape(m.id)}"]`);
+    if (el && !m.streaming && el.dataset.k === msgKey(m, r)) continue;
+    paintMsg(m, false);
+  }
+  markResult(); decorate(); renderInspector();
 }
 // One handler per SSE event type. Unknown types (a newer server) are ignored; a bad event never stops the stream.
 const SSE = {
@@ -1214,7 +1328,20 @@ const SSE = {
     if (!ev.msg.streaming && tw[ev.msg.id] && !tw[ev.msg.id].pending) delete tw[ev.msg.id];
     if (ev.roomId === S.active) { paintMsg(ev.msg); scheduleInspector(); }
   },
-  delta: (ev) => { if (ev.runId) (tw[ev.runId] ||= { shown: '', pending: '' }).pending += ev.text || ''; },
+  delta: (ev) => {
+    if (!ev.runId) return;
+    if (ev.reset) { // a retry or a recovered thread starts the message over: drop what was shown of the failed attempt
+      tw[ev.runId] = { shown: '', pending: '' };
+      const c = document.querySelector(`#feedInner [data-id="${CSS.escape(ev.runId)}"] .content`);
+      if (c) { c.classList.add('raw'); c.innerHTML = '<span class="sr-only">Writing…</span><span class="caret" aria-hidden="true"></span>'; }
+      return;
+    }
+    const st = (tw[ev.runId] ||= { shown: '', pending: '' });
+    // Text sent before this connection is gone: what was read stays, the rest waits for the final message (no glued fragments).
+    if (st.gap) { st.gap = false; st.gapped = true; const m = findMsg(ev.runId); if (m) paintMsg(m, false); }
+    if (st.gapped) return;
+    st.pending += ev.text || '';
+  },
   item: (ev) => {
     const box = ev.runId && document.querySelector(`#feedInner [data-id="${CSS.escape(ev.runId)}"] .tools`);
     if (!box || !ev.text) return;
@@ -1228,10 +1355,10 @@ const SSE = {
   cli: (ev) => { S.cli = ev.cli || null; },
   run: () => {}, end: () => {},
 };
-let lastAuthCheck = 0, everConnected = false;
+let lastAuthCheck = 0, everConnected = false, connectedAt = 0;
 function connect() {
   const es = new EventSource('/api/events');
-  es.onopen = () => { S.connected = true; renderConn(); if (everConnected) announce('Live updates reconnected'); everConnected = true; };
+  es.onopen = () => { connectedAt = Date.now(); S.connected = true; renderConn(); if (everConnected) announce('Live updates reconnected'); everConnected = true; };
   es.onerror = () => {
     S.connected = false; renderConn();
     // EventSource hides HTTP status; find out whether the session cookie expired (at most once per 10 s).
@@ -1239,9 +1366,8 @@ function connect() {
   };
   es.onmessage = (e) => {
     let ev; try { ev = JSON.parse(e.data); } catch { return; }
-    const h = ev && Object.prototype.hasOwnProperty.call(SSE, ev.t) ? SSE[ev.t] : null;
-    if (!h) return;
-    try { h(ev); } catch (err) { console.warn(`orchestra: could not apply "${ev.t}" event`, err); }
+    if (loadBusy && ev?.t !== 'hello') { held.push(ev); return; }
+    dispatch(ev);
   };
 }
 renderConn(); connect(); twLoop();

@@ -9,12 +9,15 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const child_process = require('child_process');
+// Capture the user's environment before platform (including indirect imports) adds its Windows guard.
+const NO_CWD_VAR = 'NoDefaultCurrentDirectoryInExePath';
+const SAVE = ['PATH', 'Path', NO_CWD_VAR, 'ORCHESTRA_CLAUDE_BIN', 'ORCHESTRA_CODEX_BIN'];
+const saved = Object.fromEntries(SAVE.map((k) => [k, process.env[k]]));
 const { tmpDir, rmrf, waitFor, testWithFake, samePath } = require('./helpers');
 const { setupFakeCli } = require('./fake-cli');
 const platform = require('../src/platform');
 
 const WIN = process.platform === 'win32';
-const NO_CWD_VAR = 'NoDefaultCurrentDirectoryInExePath';
 const exeName = (name) => (WIN ? `${name}.exe` : name);
 
 // A harmless executable that prints "ran": a copy of cmd.exe on Windows (args below), a sh script elsewhere.
@@ -50,13 +53,10 @@ const envWithPath = (...dirs) => {
 };
 
 let root, binDir, cwdDir, emptyDir;
-const saved = {};
-const SAVE = ['PATH', 'Path', NO_CWD_VAR, 'ORCHESTRA_CLAUDE_BIN', 'ORCHESTRA_CODEX_BIN'];
 const restoreEnv = () => { for (const k of SAVE) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } };
 const startCwd = process.cwd();
 
 before(() => {
-  for (const k of SAVE) saved[k] = process.env[k];
   root = tmpDir('ob-spawn-');
   binDir = path.join(root, 'bin'); cwdDir = path.join(root, 'cwd'); emptyDir = path.join(root, 'empty');
   for (const d of [binDir, cwdDir, emptyDir]) fs.mkdirSync(d);

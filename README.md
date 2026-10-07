@@ -50,10 +50,12 @@ All state lives in `<project>/.orchestra/` (`seats.json`, `rooms/`, `BRAINSTORM.
 | Workflow | Seats | What happens | Ends |
 | --- | --- | --- | --- |
 | **Debate** | 2+ | Optional read-only **scout** writes a shared brief with `file:line` references. Round 1: every seat gives independent ideas in parallel. Later rounds: each seat sees only the messages it has not seen. Stops early when every seat ends with `STANCE: CONVERGED`. A **facilitator** synthesis is appended to `.orchestra/BRAINSTORM.md`. | `done` |
-| **Propose -> Review** | builder + reviewer | The builder proposes; the reviewer answers with BLOCKER / SHOULD-FIX / NIT findings and `VERDICT: PASS` or `FAIL`. On `FAIL` the builder goes again (up to 6 rounds, optional effort escalation, your notes go to the next turn). | `passed`, `needs-you` or `error` |
+| **Propose -> Review** | builder + reviewer | The builder proposes; the reviewer answers with BLOCKER / SHOULD-FIX / NIT findings and `VERDICT: PASS` or `FAIL`. On `FAIL` the builder goes again (up to 3 rounds in the New session form, default 2; the API accepts up to 6; optional effort escalation, your notes go to the next turn). | `passed`, `needs-you` or `error` |
 | **Direct chat** | 1 | Talk to one seat in its own resumable thread; use it to settle what a room left open. | - |
 
 You can interject in a Debate at any time; the next speaker reads it. Seats that have nothing new to add are skipped ("agreed silently").
+
+Round limits: the New session form offers 1-4 Debate rounds and 1-3 Propose -> Review rounds (both default 2). The API accepts 1-5 Debate rounds and 1-6 Propose -> Review rounds.
 
 ## How it works
 
@@ -65,8 +67,8 @@ The levers, all on by default:
 
 | Lever | Effect |
 | --- | --- |
-| Lean CLI launch (no user plugins, MCP servers, skills, hooks, slash commands, extra tool families) | Per-call baseline **36k -> 6.7k tokens** for Claude and 24k -> 15k for Codex, **on my setup, which has several MCP servers and skills**. A bare install will see a much smaller saving. |
-| Tools only where needed | Discussion rounds and synthesis run with no tools; the scout gets `Read`/`Grep`/`Glob`. |
+| Lean CLI launch (no user plugins, MCP servers, skills, hooks, slash commands, extra tool families) | Per-call baseline **36k -> 6.7k tokens** for Claude and 24k -> 15k for Codex, **on my setup, which has several MCP servers and skills**. These two figures are single observations that were not saved as raw captures, so they are not reproducible from this repository. A bare install will see a much smaller saving. |
+| Tools only where needed | Claude seats get no tools in discussion rounds, synthesis and round 1 after a scout; the scout gets `Read`/`Grep`/`Glob`. A Codex seat always has a shell tool: in those turns it runs read-only in an empty folder and is told not to use it. That is an instruction, not an enforced limit. |
 | One scout brief in its own thread | Files are read once, not once per seat. |
 | Per-room threads and unseen-only transcripts | Each turn carries only the delta. |
 | Early stop, silent agreement | Fewer turns (neither fired in the measured run, see below). |
@@ -83,7 +85,7 @@ The raw rooms (sanitized) and a script that recomputes every number are in [docs
 - **Read-only in v0.1.** Seats run read-only: Claude with `--tools Read Grep Glob --permission-mode dontAsk` (a tool outside the list is denied instead of prompting), Codex with `sandbox_mode=read-only`. The UI has no write option. Read-only is enforced by the vendors' CLIs, not by the board.
 - **Never uses `--dangerously-skip-permissions`.**
 - **Localhost only.** The server binds `127.0.0.1`, accepts only local `Host` and `Origin` values (DNS-rebinding and cross-site protection), takes only validated `application/json` POSTs and sends a strict CSP.
-- **Session token.** Each project gets a random token in `.orchestra/session` (mode 0600), exchanged for an `HttpOnly; SameSite=Strict` cookie and required on every `/api/*` request. A web page you happen to have open, or another local process, gets `401`. Do not expose the port through a tunnel or reverse proxy.
+- **Session token.** Each project gets a random token in `.orchestra/session` (mode 0600 on macOS and Linux; on Windows the file inherits the project folder's permissions, so keep the project under your user profile), exchanged for an `HttpOnly; SameSite=Strict` cookie and required on every `/api/*` request. A web page you happen to have open, or another local process, gets `401`. Do not expose the port through a tunnel or reverse proxy.
 - **Targets stay inside the project** (resolved with `realpath`), and **the project never supplies the CLI**: every child process is resolved on `PATH` and started by absolute path, so an executable planted in a repository you point the board at is never run.
 - **Costs are yours.** Turns run under your own logins and count against your plans. The *Refresh Claude usage* button makes one small Haiku call because that is the only way to read Claude's rate-limit window.
 - **Not affiliated with Anthropic or OpenAI.** Claude and Claude Code are trademarks of Anthropic; Codex is a product of OpenAI; this project only drives the CLIs you installed.
@@ -102,20 +104,20 @@ Windows 11 is the primary development platform.
 
 - Usage meters are experimental; both source formats are undocumented and may change.
 - A server restart stops turns in flight (use *Run again* or *Continue in Direct chat*).
-- The adapters parse `claude --output-format stream-json` and `codex exec --json`. Developed against Codex CLI 0.160.0 and Claude Code CLI 2.1.291 (2026-10-07); run `doctor` after upgrading either. The lean flags are covered by unit tests on the argument lists, not by a paid run in CI.
+- The adapters parse `claude --output-format stream-json` and `codex exec --json`. Developed against Codex CLI 0.160.0 and Claude Code CLI 2.1.291 (2026-10-07). `doctor` only checks that each CLI starts and prints its version; it does not check the output format. After upgrading either CLI, send a short Direct chat message to each CLI you use: if the format changed, the failed message shows an "Unrecognised ... CLI output" error. The lean flags are covered by unit tests on the argument lists, not by a paid run in CI.
 - One user, one project per board, no remote access, on purpose.
 
 ## FAQ
 
 **Does it need an API key?** No. It shells out to the `claude` and `codex` CLIs you are already logged into.
 
-**Which models?** The ones your CLIs offer. Type any name or alias your CLI accepts; effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex). Claude Haiku 5.5 (`claude-haiku-5-5`) is supported from day one: it is the cheap default for the usage probe and for a Claude scout. The CLI may print an `unrecognized_model` warning for it; the call still succeeds.
+**Which models?** The ones your CLIs offer. Type any name or alias your CLI accepts; effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex). Claude Haiku 5.5 (`claude-haiku-5-5`) is the default for the usage probe and for a Claude scout. It has **not been verified against the real CLI yet**: the tests use a fake CLI. The CLI may print an `unrecognized_model` warning for it. The usage probe retries on `claude-haiku-4-5-20251001` if the id is rejected, but the scout has no such fallback: if the CLI rejects the id, the scout turn fails, the meeting continues without a brief, and every seat reads the code itself (the expensive path). If that happens, set the scout's model in *New session* to a model your CLI accepts.
 
 **Can I change the model or effort for one session?** Yes. *New session* has an optional "Model and effort for this session" block per participant. It applies to that session only (the seat keeps its settings), and *Run again* keeps it. The Debate discussion rounds are capped at `medium` effort by default; turn off *Settings -> Cap effort in discussion rounds* to let each seat use its own effort there (more tokens).
 
 **Can agents reply in my language?** Yes. The UI is English; set *Settings -> Agents reply in* (or `ORCHESTRA_LANG`) and every seat is told to reply in it.
 
-**What does a seat see of my project?** The project root by default. In turns that have tools, a Claude seat can use `Read`/`Grep`/`Glob` and a Codex seat has a read-only shell (which can also read outside the project). A seat *target* narrows the working directory. Discussion rounds, the synthesis and round 1 after a scout run with no tools.
+**What does a seat see of my project?** The project root by default. In turns that have tools, a Claude seat can use `Read`/`Grep`/`Glob` and a Codex seat has a read-only shell (which can also read outside the project). A seat *target* narrows the working directory. Claude seats run discussion rounds, the synthesis and round 1 after a scout with no tools. Codex seats cannot be fully stopped from using their shell: those turns run in an empty folder (`.orchestra/empty`) and the prompt tells them not to use it, so a Codex seat in a discussion round can still read project files.
 
 **Where do results go?** `.orchestra/rooms/<id>.json` per room, facilitator syntheses in `.orchestra/BRAINSTORM.md`, one summary line per finished Debate or Propose -> Review in `.orchestra/LOG.md`.
 

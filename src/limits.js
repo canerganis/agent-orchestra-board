@@ -15,16 +15,18 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
   const stored = store.readJson('limits.json');
   const limits = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : { claude: null, codex: null };
 
+  // A write failure (antivirus lock, full disk) must not take the board down: the in-memory value still shows.
+  const persist = () => { try { store.writeJson('limits.json', limits); } catch (e) { console.error(`orchestra-board: could not save limits.json: ${e.message}`); } };
   function setLimits(agent, data) {
     limits[agent] = { ...data, updated: now() };
-    store.writeJson('limits.json', limits); broadcast({ t: 'limits', limits });
+    persist(); broadcast({ t: 'limits', limits });
   }
   // Keeps the last known windows AND their `updated` stamp (the UI treats `updated` as the data's age: a failed
   // refresh must not make months-old windows look fresh). The failure itself is dated separately in `errorAt`.
   function setError(agent, message) {
     const prev = limits[agent] && typeof limits[agent] === 'object' ? limits[agent] : {};
     limits[agent] = { ...prev, error: String(message), errorAt: now() };
-    store.writeJson('limits.json', limits); broadcast({ t: 'limits', limits });
+    persist(); broadcast({ t: 'limits', limits });
   }
   // rate_limit_info fields are undocumented and often partial: any of them may be missing. resetsAt is epoch seconds
   // (ms or an ISO string tolerated). An event that carries no usable window keeps the windows already known.
@@ -44,19 +46,28 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
     const known = Object.keys(wins).length > 0;
     if (!known && typeof info.status !== 'string' && info.isUsingOverage == null) return; // nothing usable
     setLimits('claude', {
-      windows: known ? wins : prev.windows || {},
+      // A partial event (one window only) updates that window and keeps the others already known.
+      windows: known ? { ...(prev.windows && typeof prev.windows === 'object' ? prev.windows : {}), ...wins } : prev.windows || {},
       status: typeof info.status === 'string' ? info.status : prev.status,
       overage: info.isUsingOverage != null ? !!info.isUsingOverage : !!prev.overage,
     });
   }
+  // The most recently modified rollout under dir (directories nested up to `depth` levels). Every file is compared:
+  // a session resumed today lives in an older date folder, so folder names alone do not say which one is current.
   function newestFile(dir, depth) {
-    let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
-    ents = ents.map((e) => ({ e, p: path.join(dir, e.name) })).sort((a, b) => b.e.name.localeCompare(a.e.name));
-    for (const { e, p } of ents) {
-      if (depth > 0 && e.isDirectory()) { const f = newestFile(p, depth - 1); if (f) return f; }
-      if (depth === 0 && e.isFile() && e.name.endsWith('.jsonl')) return ents.filter((x) => x.e.isFile() && x.e.name.endsWith('.jsonl')).map((x) => x.p).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
-    }
-    return null;
+    let best = null, bestMt = -1;
+    (function walk(d, lvl) {
+      let ents; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch { return; }
+      for (const e of ents) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory() && lvl < depth) walk(p, lvl + 1);
+        else if (e.isFile() && e.name.endsWith('.jsonl')) {
+          let mt; try { mt = fs.statSync(p).mtimeMs; } catch { continue; }
+          if (mt > bestMt || (mt === bestMt && best && p > best)) { bestMt = mt; best = p; } // equal mtimes: the later path (newer date folder) wins
+        }
+      }
+    })(dir, 0);
+    return best;
   }
   // rate_limits is one {primary, secondary, plan_type, limit_id?} object; newer CLIs may tag it with a limit_id or
   // report several limits (an array, or a map keyed by limit id). Prefer the "codex" limit, else the first one.
@@ -95,7 +106,13 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
 
   let timer = null;
   function start() { if (timer) return; timer = setInterval(refreshCodex, 30000); timer.unref(); refreshCodex(); }
-  function stop() { if (timer) clearInterval(timer); timer = null; }
+  // stop() (board shutdown) also kills a running Claude limits probe, so it cannot outlive the board as an orphan.
+  let closing = false, activeProbe = null;
+  function stop() {
+    closing = true;
+    if (timer) clearInterval(timer); timer = null;
+    if (activeProbe) { try { killTree(activeProbe); } catch {} activeProbe = null; }
+  }
 
   // A tiny Haiku call is the only way to get Claude's rate_limit_event; it costs under $0.01.
   // One probe at a time. Failures become a visible limits.claude.error that names the real cause: a missing CLI,
@@ -122,10 +139,14 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
         error: (m) => { turnError = String(m || 'claude error'); },
       });
       let probe;
+      if (closing) return resolve({ ok: false, error: 'stopped' });
       try { probe = spawnFn(bin, claude.buildProbeArgs(model), { cwd: os.tmpdir(), windowsHide: true }); }
       catch (e) { const m = spawnErrorMessage('claude', bin, e, process.env); setError('claude', m); return resolve({ ok: false, error: m }); }
+      activeProbe = probe;
       const finish = (code, signal) => {
         if (done) return; done = true; clearTimeout(timer);
+        if (activeProbe === probe) activeProbe = null;
+        if (closing) return resolve({ ok: false, error: 'stopped', retryable: false }); // a killed probe is not a limits error
         parser.end();
         let error = null;
         if (spawnErr) error = spawnErr;

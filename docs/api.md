@@ -4,11 +4,11 @@ Everything is JSON. The server binds `127.0.0.1` and applies the security gate b
 
 ## Session
 
-Each project has a random token, kept in `<project>/.orchestra/session` (mode 0600) and printed in the start URL (`http://localhost:<port>/?t=<token>`).
+Each project has a random token, kept in `<project>/.orchestra/session` (mode 0600 on POSIX; on Windows it inherits the project folder's ACL) and printed in the start URL (`http://localhost:<port>/?t=<token>`).
 
 | Request | Result |
 | --- | --- |
-| `GET /?t=<token>` | `303` to `/` with `set-cookie: ob_session_<port>=<token>; Path=/; HttpOnly; SameSite=Strict`; a wrong token is `403 {"error":"bad session token"}` |
+| `GET /?t=<token>` | `303` to `/` with `set-cookie: ob_session_<port>=<token>; Path=/; HttpOnly; SameSite=Strict`; a wrong token is `403` with a small HTML page titled "This link is out of date" (not JSON, so do not parse it as an API error) |
 | `GET /` or `GET /index.html` without the cookie | `401` with a small HTML page ("Session required") |
 | any `/api/*` without the cookie | `401 {"error":"unauthorized: open the URL printed at startup"}` |
 | other static files (`/app.css`, `/app.js`) | served without the cookie |
@@ -54,7 +54,7 @@ Content types: html, css, js, svg, png, ico, json.
 | `POST /api/rooms/:id/say` | `{text}` | `{ok}`; only for a running meeting/chain (`400` for dm or finished rooms). The next speaker reads it. |
 | `POST /api/rooms/:id/delete` | | `{ok}` |
 
-Room statuses: meeting `running | done | stopped | error`; chain `running | passed | needs-you | stopped | error`; dm `running | idle`.
+Room statuses: meeting `running | done | stopped | error`; chain `running | passed | needs-you | stopped | error`; dm `running | idle | stopped` (a dm room left `running` when the board stopped is set to `stopped` on restart).
 
 `overrides` (optional, New session modal) is `{seatId: {model?, effort?}}`, stored on the room. Each key must be a real agent id (`400 no such agent`). Each value must be an object (`400 each override must be an object`), and the whole field must be an object keyed by agent id (`400 overrides must be an object keyed by agent id`). `model` is a CLI model name of up to 64 characters from `[A-Za-z0-9._:\-\[\]]` (`400 invalid model name`). `effort` must be one the agent's CLI supports (`400 effort "..." is not supported by <agent>`). Empty values mean the seat's own setting and are dropped. An override applies to every turn that seat takes in that room and never changes the seat. A Claude scout's brief runs on `claude-haiku-5-5` unless the scout has a `model` override, and the scout's other turns keep their own model. Haiku models get no `--effort` flag.
 
@@ -89,7 +89,7 @@ Each `data:` line is a JSON object with a `t` field:
 
 ## Persistence
 
-`<project>/.orchestra/`: `seats.json`, `rooms/<id>.json`, `limits.json`, `settings.json`, `session` (the session token, mode 0600; the generated `.orchestra/.gitignore` keeps it and `empty/` out of git), `LOG.md` (one line per finished Debate or Propose -> Review), `BRAINSTORM.md`, `empty/` (cwd for Codex no-tools turns). Optional `.orchestra/PLAN.md` and `.orchestra/HANDOFF.md` are attached, with the tail of `LOG.md`, when a room is started *with context*.
+`<project>/.orchestra/`: `seats.json`, `rooms/<id>.json`, `limits.json`, `settings.json`, `session` (the session token, mode 0600 on POSIX; the generated `.orchestra/.gitignore` keeps it and `empty/` out of git), `LOG.md` (one line per finished Debate or Propose -> Review), `BRAINSTORM.md`, `empty/` (cwd for Codex no-tools turns). Optional `.orchestra/PLAN.md` and `.orchestra/HANDOFF.md` are attached, with the tail of `LOG.md`, when a room is started *with context*.
 
 ## Environment
 
@@ -100,4 +100,4 @@ Each `data:` line is a JSON object with a `t` field:
 | `ORCHESTRA_LANG` | default `settings.lang` (`English`) |
 | `ORCHESTRA_NAIVE` | `1` turns the token levers off (drops the token-trimming CLI flags; the isolation flags stay; no scout, full transcripts, fresh threads, no early stop or effort cap). **Benchmark baseline only**, read at start; see [bench/README.md](../bench/README.md) |
 | `ORCHESTRA_RETRY_DELAYS_MS` | comma-separated delays in ms before each automatic retry of a transiently failed turn (`src/config.js` has the default) |
-| `ORCHESTRA_IDLE_MINUTES` | minutes of CLI silence before a turn is treated as a transient failure (`settings.idleMinutes` wins; default 5, or 10 for Codex seats; `0` or `off` disables the watchdog) |
+| `ORCHESTRA_IDLE_MINUTES` | minutes of CLI silence before a turn is treated as a transient failure. Default 5, or 10 for Codex seats. The effort multiplies it: x2 at `high`, x3 at `xhigh` and `max`, so a Codex `xhigh` seat waits 30 minutes of silence by default (and a Codex `max` seat too). `ORCHESTRA_IDLE_MINUTES=2` on a Codex `xhigh` seat gives 6 minutes. A `settings.idleMinutes` key in `.orchestra/settings.json` takes precedence over the variable; it is hand-edited only, `POST /api/settings` does not accept it. `0` or `off` disables the watchdog |

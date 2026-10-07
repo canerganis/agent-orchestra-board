@@ -41,28 +41,43 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
     return Promise.race([detectCli().then((cli) => cli[agent]?.version || null), wait]).catch(() => null);
   }
 
+  // Board shutdown: no new CLI child is spawned after this (queued and retrying turns resolve as 'stopped').
+  let closing = false;
+  function shutdown() { closing = true; }
+
+  // opts.signal (AbortSignal, optional): when it fires while this turn still waits in the seat's queue, the turn
+  // resolves at once as stopped; the queued execSeat then no-ops (it checks the same signal before spawning).
+  // A turn that already started is stopped through stopSeat (its child is killed), as before.
   function runSeat(seatId, prompt, opts = {}) {
     const r = rtOf(seatId);
-    const p = r.queue.then(() => execSeat(seatId, prompt, opts)).catch((e) => {
+    let started = false;
+    const p = r.queue.then(() => { started = true; return execSeat(seatId, prompt, opts); }).catch((e) => {
       // A bug in a turn must never stall a meeting or chain: report it as a failed turn.
       const m = `internal error: ${(e && e.message) || e}`;
       try { setRt(seatId, { status: 'error', activity: m, child: null, startedAt: null, roomId: null, retryWait: null }); } catch {}
       return { ok: false, error: m, text: '', tokens: 0, cached: 0, cost: 0, failure: 'other' };
     });
     r.queue = p.catch(() => {});
-    return p;
+    const sig = opts.signal;
+    if (!sig) return p;
+    const stoppedRes = () => ({ ok: false, error: 'stopped', text: '', tokens: 0, cached: 0, cost: 0, failure: 'stopped' });
+    const cut = new Promise((resolve) => {
+      const fire = () => { if (!started) resolve(stoppedRes()); };
+      if (sig.aborted) fire(); else sig.addEventListener('abort', fire, { once: true });
+    });
+    return Promise.race([p, cut]);
   }
 
   // tools: 'none' (discussion), 'read' (look at code), 'write' (seat must allow it).
   // room: meetings/chains keep one thread per seat per room, so old conversations are never re-sent.
   // recovery(): text that re-establishes the context on a fresh thread (role header is added here); onRecover(note):
   // called once when a lost thread was replaced (rooms.js records it as a system line).
-  async function execSeat(seatId, prompt, { effort, model = null, runId = newId(), roomId = null, room = null, tools = null, withTarget = true, threadKey = null, cancelled = null, recovery = null, onRecover = null } = {}) {
+  async function execSeat(seatId, prompt, { effort, model = null, runId = newId(), roomId = null, room = null, tools = null, withTarget = true, threadKey = null, cancelled = null, signal = null, recovery = null, onRecover = null } = {}) {
     roomId ??= room?.id ?? null; // run/item/end events carry the room even when the caller passed only `room`
     const seat = seatById(seatId);
     if (!seat) return { ok: false, error: 'no such agent', text: '' };
-    const isStopped = () => !!(room?.stopped || cancelled?.());
-    if (isStopped()) return { ok: false, error: 'stopped', text: '' }; // queued before the stop
+    const isStopped = () => !!(closing || room?.stopped || cancelled?.() || signal?.aborted);
+    if (isStopped()) return { ok: false, error: 'stopped', text: '' }; // queued before the stop or the board shutdown
     if (seat.budget && seat.used >= seat.budget) return { ok: false, error: `${seat.name} reached its token budget`, text: '' };
     const eff = effort || seat.effort;
     const mdl = model || seat.model; // per-session model override (room.overrides), else the seat model
@@ -70,7 +85,14 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
     const threads = room ? (room.threads ||= {}) : null;
     const key = threadKey || seat.id;
     // Room threads are persisted with the room (rooms.js); a seat thread goes to seats.json right away.
-    const saveThread = (id) => { if (threads) threads[key] = id; else if (seat.thread !== id) { seat.thread = id; saveSeats(); } };
+    // A seat thread is written only while the seat still has the generation this turn started with: a 'Clear memory'
+    // or a runtime/role/scope edit made while the turn ran must not be undone when the turn ends.
+    const gen0 = seat.threadGen || 0;
+    const saveThread = (id) => {
+      if (threads) { threads[key] = id; return; }
+      if ((seat.threadGen || 0) !== gen0) return;
+      if (seat.thread !== id) { seat.thread = id; saveSeats(); }
+    };
     const agent = seat.agent === 'codex' ? 'codex' : 'claude';
     const delays = retryDelaysMs ?? retryDelays();
 
@@ -96,7 +118,8 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
       out = await attempt({ seat, seatId, agent, prompt: turnPrompt, eff, mdl, mode, thread, recoveryText, withTarget, runId, roomId, first });
       first = false;
       total.tokens += out.tokens; total.cached += out.cached; total.cost += out.cost;
-      if (out.notStarted) return { ok: false, error: out.error, text: '' }; // spawn() threw before anything ran
+      // spawn() threw before anything ran: the CLI cannot run at all ('unavailable'), so meetings bench the seat.
+      if (out.notStarted) return { ok: false, error: out.error, text: '', failure: out.stopped ? 'stopped' : 'unavailable' };
       if (out.ok) {
         // A CLI that resumes an unknown id by quietly starting a new thread answered without the conversation: treat
         // it as a lost thread (once) instead of saving the context-free thread over the real one.
@@ -111,7 +134,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
       }
       const stopped = out.stopped || isStopped() || !!rtOf(seatId).stopRequested;
       if (stopped) { out.error = 'stopped'; out.kind = 'stopped'; break; }
-      if (out.spawnErr) { out.kind = 'other'; break; }
+      if (out.spawnErr) { out.kind = 'unavailable'; break; } // the binary could not be launched: a retry cannot help
       let kind = out.idle ? 'transient' : classifyFailure(`${out.error}\n${out.stderr}`, { resumed: !!thread, thread });
       // A turn the CLI reported as completed is never re-run (Codex: turn.completed is the source of truth).
       if (out.completed && agent === 'codex' && kind === 'transient') kind = 'other';
@@ -145,7 +168,9 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
       break;
     }
     // A failed turn still remembers the thread its CLI reported (the next turn resumes it, as before).
-    if (!out.ok && out.gotThread) saveThread(out.gotThread);
+    // A failed turn keeps the old thread: a CLI that could not resume it and reported a different id must not
+    // replace the conversation the seat still has (the new thread holds none of it).
+    if (!out.ok && out.gotThread && (!thread || out.gotThread === thread)) saveThread(out.gotThread);
     const ok = out.ok, err = ok ? null : out.error;
     setRt(seatId, { status: ok ? 'idle' : 'error', activity: ok ? '' : err, startedAt: null, child: null, roomId: null, stopRequested: false, retryWait: null });
     broadcast({ t: 'end', seatId, runId, roomId, ok, tokens: total.tokens, cached: total.cached, cost: total.cost, error: err });
@@ -167,6 +192,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
   // One CLI process. Resolves with the raw outcome; the retry/recovery policy lives in execSeat.
   function attempt({ seat, seatId, agent, prompt, eff, mdl, mode, thread, recoveryText, withTarget, runId, roomId, first }) {
     return new Promise((resolve) => {
+      if (closing) return resolve({ ok: false, notStarted: true, stopped: true, error: 'stopped', text: '', tokens: 0, cached: 0, cost: 0 });
       const tgt = withTarget ? resolveTarget(seat, PROJECT) : { cwd: PROJECT, preface: '' };
       // Role header and target scope go out once per thread; a resumed thread already has them.
       const header = thread ? '' : `[You are "${seat.name}" (${seat.role || 'agent'}) in a multi-agent orchestra of Claude and Codex seats. Reply in ${settings.lang}. Be concise.${mode !== 'write' ? ' Do not modify files.' : ''}]\n\n`;
@@ -273,7 +299,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
     return true;
   }
 
-  return { runSeat, execSeat, stopSeat, detectCli, cliVersions: versions.cliVersionsCached };
+  return { runSeat, execSeat, stopSeat, shutdown, detectCli, cliVersions: versions.cliVersionsCached };
 }
 
 module.exports = { createRunner };

@@ -55,6 +55,8 @@ function body(req) {
 }
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
 const UNAUTH_HTML = '<!doctype html><meta charset="utf-8"><title>Agent Orchestra Board</title><body style="font:15px system-ui;padding:40px;max-width:560px"><h2>Session required</h2><p>This board accepts one browser session per project. Open the link printed in the terminal where Agent Orchestra Board was started (it ends in <code>/?t=&hellip;</code>), or restart the board with <code>--open</code>.</p></body>';
+// A ?t= link from another board session (another project, or the session file was deleted): same help, specific cause.
+const BAD_TOKEN_HTML = '<!doctype html><meta charset="utf-8"><title>Agent Orchestra Board</title><body style="font:15px system-ui;padding:40px;max-width:560px"><h2>This link is out of date</h2><p>This link belongs to another Agent Orchestra Board session (another project, or the session file was reset). Open the URL printed in the terminal where the board is running now, or restart the board with <code>--open</code>.</p></body>';
 
 function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
   const PORT = Number(port) || DEFAULT_PORT;
@@ -71,7 +73,12 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
   function broadcast(ev) { const s = `data: ${JSON.stringify(ev)}\n\n`; for (const c of clients) c.write(s); }
 
   const limits = createLimits({ store, broadcast });
-  const settings = store.readJson('settings.json') || defaultSettings();
+  // Saved settings (Settings panel) are merged over the defaults. ORCHESTRA_LANG, when set, overrides the saved language:
+  // settings.json keeps the whole object once any setting is saved, so the environment variable would otherwise
+  // never apply again.
+  const savedSettings = store.readJson('settings.json');
+  const settings = { ...defaultSettings(), ...(savedSettings && typeof savedSettings === 'object' && !Array.isArray(savedSettings) ? savedSettings : {}) };
+  if (process.env.ORCHESTRA_LANG && process.env.ORCHESTRA_LANG.trim()) settings.lang = process.env.ORCHESTRA_LANG.trim();
   const seats = createSeats({ store, broadcast });
   const runner = createRunner({ store, seats, limits, settings, broadcast });
   const rooms = createRooms({ store, seats, runner, broadcast });
@@ -132,7 +139,7 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
       // Session: the token travels in the URL exactly once (first load), then only in the HttpOnly cookie.
       const authed = sec.tokenEquals(sec.cookieValue(req.headers.cookie, COOKIE), TOKEN);
       if (req.method === 'GET' && p === '/' && url.searchParams.has('t')) {
-        if (!sec.tokenEquals(url.searchParams.get('t'), TOKEN)) return json(res, 403, { error: 'bad session token' });
+        if (!sec.tokenEquals(url.searchParams.get('t'), TOKEN)) { res.writeHead(403, { 'content-type': 'text/html; charset=utf-8' }); return res.end(BAD_TOKEN_HTML); }
         res.writeHead(303, { location: '/', 'set-cookie': sec.setCookie(COOKIE, TOKEN) }); return res.end();
       }
       if (!authed && p.startsWith('/api/')) return json(res, 401, { error: 'unauthorized: open the URL printed at startup' });
@@ -170,7 +177,10 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
         if (sm[2] === 'stop') return json(res, 200, { ok: runner.stopSeat(seat.id) });
         if (sm[2] === 'reset') { seats.resetThread(seat); return json(res, 200, { ok: true }); }
         if (sm[2] === 'delete') {
-          if (rtOf(seat.id).child) return json(res, 400, { error: 'cannot delete while running' });
+          // Running, between attempts, or waiting to retry: the turn would keep spawning CLI work on a seat the board can
+          // no longer reach, so the seat is kept until its turn has ended.
+          const srt = rtOf(seat.id);
+          if (srt.child || srt.status === 'working' || srt.retryWait) return json(res, 400, { error: 'cannot delete while running' });
           seats.removeSeat(seat); return json(res, 200, { ok: true });
         }
         if (sm[2] === 'send') {
@@ -242,13 +252,23 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
       server.listen(PORT, '127.0.0.1', () => { limits.start(); resolve({ port: PORT, project: PROJECT, url: `http://localhost:${PORT}/?t=${TOKEN}` }); });
     });
   }
+  // Board shutdown, in this order: no new CLI turn can start, every room stops (meetings and chains break out),
+  // then every running seat's process tree is killed. Returns how many seat turns were running.
+  function stopWork() {
+    runner.shutdown();
+    rooms.stopAll();
+    let killed = 0;
+    for (const s of seats.all()) { try { if (runner.stopSeat(s.id)) killed++; } catch {} }
+    return killed;
+  }
   function close() {
+    stopWork();
     limits.stop();
     for (const c of clients) c.end();
     return new Promise((resolve) => server.close(() => resolve()));
   }
 
-  return { server, start, close, state, handle: safeHandle, store, settings, seats, runner, rooms, limits, broadcast, token: TOKEN };
+  return { server, start, close, stopWork, state, handle: safeHandle, store, settings, seats, runner, rooms, limits, broadcast, token: TOKEN };
 }
 
 module.exports = { createServer, serveStatic };
