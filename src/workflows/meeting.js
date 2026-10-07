@@ -40,6 +40,9 @@ function createMeeting({ store, seats, rooms, settings = {} }) {
     const unseen = (id) => room.messages.filter((m) => !m.streaming && m.text && !m.error && m.seatId !== id && m.seatId !== 'system' && !seen[id].has(m.id));
     // Naive baseline: everything said so far (own messages too: the turn runs on a fresh thread).
     const transcript = () => room.messages.filter((m, i) => i > 0 && !m.streaming && m.text && !m.error && m.seatId !== 'system');
+    // A user note can sit in the middle of a batch (live test: a Codex seat skipped a note placed between peer messages),
+    // so a turn whose new messages include one is told explicitly to act on it.
+    const noteAsk = (ms) => (ms.some((m) => m.seatId === 'user') ? '\n\nThe user (the human running this meeting) wrote a note above: do what it asks in this reply.' : '');
     const fmt = (ms) => ms.map((m) => `${m.seatId === 'user' ? 'User (the human running this meeting)' : m.name}: ${m.text}`).join('\n\n');
     const hasThread = (id) => !!room.threads?.[id];
     const converged = (text) => /^STANCE:\s*CONVERGED$/i.test(lastLine(text));
@@ -96,7 +99,7 @@ function createMeeting({ store, seats, rooms, settings = {} }) {
           if (!fresh.length) { stances.push(!!lastStance[id]); continue; }
           // Silent agreement: a converged seat skips its turn when everything new is also converged.
           if (lastStance[id] && fresh.length && fresh.every((m) => converged(m.text))) { sys(room, `✓ ${seatById(id)?.name} agreed silently (turn skipped).`, { skip: { seatId: id, round: r } }); stances.push(true); continue; }
-          res = await say(room, id, `${hasThread(id) ? '' : background()}Round ${r} of ${rounds}. New messages since your last turn:\n\n${fmt(fresh) || '(nothing new)'}\n\nRespond as in a live meeting: build on, challenge (name who and why) or merge. Max 120 words. End with exactly one line: "STANCE: CONVERGED" if you would sign the current direction, otherwise "STANCE: OPEN".`,
+          res = await say(room, id, `${hasThread(id) ? '' : background()}Round ${r} of ${rounds}. New messages since your last turn:\n\n${fmt(fresh) || '(nothing new)'}${noteAsk(fresh)}\n\nRespond as in a live meeting: build on, challenge (name who and why) or merge. Max 120 words. End with exactly one line: "STANCE: CONVERGED" if you would sign the current direction, otherwise "STANCE: OPEN".`,
             { round: r, label: 'discussion', tools: 'none', withTarget: false, effort: capEffort(id, 'medium', room) });
           // Not marked seen on failure: a failed turn may not have stored the prompt, and a repeated message is cheaper than a lost one.
           if (res.ok) fresh.forEach((m) => seen[id].add(m.id));

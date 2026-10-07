@@ -79,6 +79,7 @@ testWithFake(fake, 'full debate: scout brief -> parallel round 1 without tools -
   assert.ok(!r2a.stdin.includes('Meeting topic:') && !r2a.stdin.startsWith('['), 'a resumed thread gets neither background nor header');
   assert.ok(r2a.stdin.includes('New messages since your last turn:\n\nBob: Idea B: keep the host allowlist only.'));
   assert.ok(r2a.stdin.includes(`User (the human running this meeting): ${NOTE}`), 'the note is delivered in round 2');
+  assert.ok(r2a.stdin.includes('wrote a note above: do what it asks in this reply.'), 'a turn with a user note is told to act on it');
   assert.ok(!r2a.stdin.includes('Idea A'), 'own messages are never re-sent');
   assert.equal(r2a.effort, 'medium', 'discussion effort capped at medium (seat effort is high)'); assert.deepEqual(r2a.tools, ['']);
   assert.deepEqual(r2b.args.slice(0, 3), ['exec', 'resume', r1b.thread]);
