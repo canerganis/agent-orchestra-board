@@ -7,8 +7,10 @@ const { createFeeder } = require('./jsonl');
 // Permission mode: a write seat auto-approves edits (acceptEdits); read and none turns run with dontAsk, so a tool
 // outside the allowed list is denied instead of waiting for a prompt nobody can answer in -p mode.
 // --tools takes a variable number of values, so it must stay the last flag (the prompt goes on stdin).
+// Haiku models take no --effort (the probe below omits it too), so it is left out for them.
+const takesEffort = (model) => !/haiku/i.test(String(model || ''));
 function buildArgs({ model, effort, thread = null, sessionId = null, addDir = null, mode = 'read' }) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model, '--effort', effort, ...claudeLean()];
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model, ...(takesEffort(model) ? ['--effort', effort] : []), ...claudeLean()];
   if (thread) args.push('--resume', thread); else if (sessionId) args.push('--session-id', sessionId);
   if (addDir) args.push('--add-dir', addDir);
   args.push('--permission-mode', mode === 'write' ? 'acceptEdits' : 'dontAsk');
@@ -17,8 +19,8 @@ function buildArgs({ model, effort, thread = null, sessionId = null, addDir = nu
 }
 
 // Minimal no-tools call whose only purpose is the rate_limit_event. No --effort: Haiku does not take one.
-function buildProbeArgs() {
-  return ['-p', '--output-format', 'stream-json', '--verbose', '--model', CLAUDE_PROBE_MODEL, '--no-session-persistence', ...CLAUDE_LEAN, '--tools', ''];
+function buildProbeArgs(model = CLAUDE_PROBE_MODEL) {
+  return ['-p', '--output-format', 'stream-json', '--verbose', '--model', model, '--no-session-persistence', ...CLAUDE_LEAN, '--tools', ''];
 }
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
@@ -112,4 +114,4 @@ function createParser(handlers = {}) {
   return { feed: feeder.feed, end: feeder.end, stats: feeder.stats, event };
 }
 
-module.exports = { buildArgs, buildProbeArgs, createParser };
+module.exports = { buildArgs, buildProbeArgs, createParser, takesEffort };

@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The format follows [Kee
 
 ## [Unreleased]
 
+### Added
+
+- **Claude Haiku 5.5** (`claude-haiku-5-5`) on day one: listed in the Claude model list (the other models stay), the default model for the usage probe, and the default model of a Claude scout in the New session modal. The CLI may print an `unrecognized_model` warning for this id; the call still succeeds, and warnings on stderr or non-JSON lines are never read as errors (covered by tests).
+- **Per-session overrides** in *New session*: optionally set the model and effort of each participant (Debate and Propose -> Review) for that session only. Stored on the room (so *Run again* keeps them), validated like seats (a CLI model name, an effort the seat's CLI supports; otherwise 400). Seat defaults are unchanged.
+- **Cap effort in discussion rounds** setting (Settings, on by default): when on, Debate discussion rounds run at `medium` at most; when off, every turn uses the seat's own effort. Persisted in `.orchestra/settings.json` as `capEffort`.
+
 ## [0.1.0] - 2026-10-07
 
 First public cut.
@@ -12,7 +18,7 @@ First public cut.
 
 - Seats: Claude Code (`claude -p --output-format stream-json`) and Codex (`codex exec --json`) agents with name, role, model, effort, permission (`read` default, `write` opt-in), target scope, token budget and colour; resumable per-seat threads.
 - Workflows: **Debate** (optional scout brief, parallel round 1, unseen-only discussion rounds, early stop on `STANCE: CONVERGED`, silent agreement, facilitator synthesis appended to `.orchestra/BRAINSTORM.md`), **Propose -> Review** (`VERDICT: PASS/FAIL` loop, `git diff` for write builders, optional effort escalation, user notes delivered to the next turn) and **Direct chat**.
-- Live UI over Server-Sent Events: seat status and activity, streamed text, tool/reasoning/error items, per-room net vs cached tokens and cost. English UI; agents reply in a configurable language (`ORCHESTRA_LANG`, Settings).
+- Live UI over Server-Sent Events: seat status and activity, streamed text, tool-call lines and failed-turn errors, per-room net vs cached tokens and cost. English UI; agents reply in a configurable language (`ORCHESTRA_LANG`, Settings).
 - Usage meters: Claude from `rate_limit_event` plus an on-demand Haiku probe; Codex from the newest `~/.codex/sessions` rollout file (30 s poll).
 - Token-lean launch: no user plugins, MCP servers, skills, hooks or extra tool families; per-mode `--tools`; codex no-tools turns run in an empty cwd. Measured: Claude baseline 36k -> 6.7k tokens per call, Codex 24k -> 15k; the same 4-agent meeting 1.69M -> 0.46M tokens (-73%).
 - Security gate: binds `127.0.0.1`; `Host`/`Origin` allowlist; JSON-only `POST` with a 1 MB cap and validated bodies; per-project session token (`.orchestra/session`, kept out of git by a generated `.orchestra/.gitignore`) printed in the start URL and exchanged for an `HttpOnly; SameSite=Strict` cookie that every `/api/*` request needs; CSP and `no-store` headers; static files only from `public/`; seat targets confined to the project via `realpath`.
@@ -23,8 +29,8 @@ First public cut.
 - Project docs: README, LICENSE (MIT), SECURITY, CONTRIBUTING, `docs/api.md`, `docs/ARCHITECTURE.md`, CI on Ubuntu/macOS/Windows with Node 20, 22 and 24.
 - Workflow status: a Propose -> Review whose builder cannot run ends `error` (not `needs-you`), and a Debate in which every turn failed ends `error` (not `done`).
 - Setup card: a CLI that no seat uses is shown as *Optional* instead of blocking; a blocked CLI names the seats that depend on it; the *New session* defaults and team presets are built from seats whose CLI passed the check. The agent editor shows a seat's permission (read-only display; write is enabled in `.orchestra/seats.json` or via `POST /api/seats`) and preserves it on save.
-- Product and package name **Agent Orchestra Board** / `agent-orchestra-board`, renamed from `orchestra-board` because that npm name belongs to an unrelated project (`npx orchestra-board` would run it). Bins: `agent-orchestra-board` and `aob`, both pointing at `bin/agent-orchestra-board.js`. The package is not published to npm yet; until it is, install by cloning. Known gap: runtime strings (`--help`, error prefixes, the `doctor` hint, the 401 page, some UI titles) and `test/cli.test.js` still use the old name, and `bin/orchestra-board.js` is kept as a deprecated alias for that test; delete it once they are renamed.
-- Docs: `docs/ARCHITECTURE.md` (module map, data flow, turn lifecycle, threads, token-lean levers, security model), `docs/decisions/` (five ADRs: decisions by the project owner, records drafted by agents), `docs/measurements/2026-10-07/` (sanitized room files and `summarize.mjs` behind the 1.69M -> 0.46M figure) and `bench/` (`token-bench.mjs`, a repeatable lean-vs-naive comparison; uses the implemented `ORCHESTRA_NAIVE=1` flag, and needs `GET /api/state` to report `naive`). `ORCHESTRA_NAIVE=1` is a benchmark-only switch that turns the token levers off.
+- Product and package name **Agent Orchestra Board** / `agent-orchestra-board`, renamed from `orchestra-board` because that npm name belongs to an unrelated project (`npx orchestra-board` would run it). Bins: `agent-orchestra-board` and `aob`, both pointing at `bin/agent-orchestra-board.js`. The package is not published to npm yet; until it is, install by cloning. `bin/orchestra-board.js` remains as a deprecated alias of the same CLI.
+- Docs: `docs/ARCHITECTURE.md` (module map, data flow, turn lifecycle, threads, token-lean levers, security model), `docs/decisions/` (five ADRs: decisions by the project owner, records drafted by agents), `docs/measurements/2026-10-07/` (sanitized room files and `summarize.mjs` behind the 1.69M -> 0.46M figure) and `bench/` (`token-bench.mjs`, a repeatable lean-vs-naive comparison; uses the implemented `ORCHESTRA_NAIVE=1` flag, and `GET /api/state` reports `naive`). `ORCHESTRA_NAIVE=1` is a benchmark-only switch that turns the token levers off.
 
 ### Security
 

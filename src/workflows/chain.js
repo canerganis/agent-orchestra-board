@@ -13,7 +13,7 @@ function createChain({ store, seats, rooms, broadcast }) {
     const { task, builderId, reviewerId, maxRounds, escalate } = room;
     const builder = seatById(builderId), reviewer = seatById(reviewerId);
     const ctx = room.withContext ? buildContext() : '';
-    let effort = builder.effort, feedback = null, passed = false, builderFailed = false, reviewerFailed = false;
+    let effort = room.overrides?.[builderId]?.effort || builder.effort, feedback = null, passed = false, builderFailed = false, reviewerFailed = false;
     for (let r = 1; r <= maxRounds && !room.stopped; r++) {
       room.round = r; pushRoom(room);
       // A read-only builder proposes (v0.1 default); only a write seat edits files.

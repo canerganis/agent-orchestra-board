@@ -71,6 +71,7 @@ Rooms (a Debate, a Propose -> Review chain or a Direct chat) are the unit of per
 | `doctor.test.js` | Binary resolution (PATH only, `.com`/`.exe`, `.cmd`/`.bat` shims), spawn failures, the `ORCHESTRA_*_BIN` note, a CLI-named file in the project, state-directory probe, login detection. |
 | `spawn.test.js` | Spawn safety: a planted executable in the child cwd never runs (`spawnResolved`, `execFileResolved`, runner turns, version detection, usage probe, all with the real libuv lookup live); only `platform.js` requires `child_process`. |
 | `cli.test.js` | `bin/agent-orchestra-board.js` and the legacy `server.js` shim: argument parsing, real launches on 4395-4399, missing project dir (exit 2), `doctor --json`, `--help`. |
+| `robustness.test.js` | Transient-failure retries on the same thread, idle watchdog, naive-mode flags and naive debate. |
 | `store.test.js` | `store.ensure()` writes `.orchestra/.gitignore` once; `rooms.load()` skips an unreadable room file and keeps the rest. |
 | `util.test.js` | Stateless helpers: verdict/stance line extraction, clipping, JSONL splitting, ids. |
 
@@ -106,7 +107,8 @@ Each lever is always on in v0.1, unless `ORCHESTRA_NAIVE=1` is set (benchmark ba
 | Scout brief in its own thread | `meeting.js` | files are read once and shared, not once per seat |
 | Per-room threads, unseen-only transcripts | `runner.js`, `meeting.js` | each turn carries only the delta |
 | Early stop, silent agreement | `meeting.js` | stop when all seats say `STANCE: CONVERGED`; skip a converged seat whose new messages are all converged |
-| Effort cap | `meeting.js` (`capEffort`) | discussion rounds run at most `medium` effort |
+| Effort cap | `meeting.js` (`capEffort`) | discussion rounds run at most `medium` effort unless `settings.capEffort` is false |
+| Scout default model | `meeting.js`, `rooms.js` | a Claude scout's brief runs on `claude-haiku-5-5` unless the scout has a session model override; its other turns keep the seat model |
 | Net vs cached accounting | `runner.js`, adapters | `tokens` = uncached input + output, `cached` separate; `cost` is the CLI-reported spend (Claude only) |
 | Per-seat token budgets | `runner.js` | a seat stops once it used its allowance |
 

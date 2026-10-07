@@ -20,13 +20,13 @@ The README quotes **1.69M -> 0.46M total tokens (-73%)** for the same 4-agent pl
 
 ## The naive flag: `ORCHESTRA_NAIVE=1`
 
-A benchmark needs the baseline produced by the **same code**, not by an old commit, which is why the server has one switch, `ORCHESTRA_NAIVE=1` (`naive()` in `src/config.js`, read by the runner and `src/workflows/meeting.js`), that turns the token levers off. This script refuses to run unless the "naive" board reports `naive: true` in `GET /api/state`. **Dependency:** `state()` in `src/server.js` must include `naive: naive()` for that check to pass; if your checkout's `/api/state` has no `naive` field, a correctly started naive board is refused, and `--allow-unverified-naive` is the only way around it.
+A benchmark needs the baseline produced by the **same code**, not by an old commit, which is why the server has one switch, `ORCHESTRA_NAIVE=1` (`naive()` in `src/config.js`, read by the runner and `src/workflows/meeting.js`), that turns the token levers off. This script refuses to run unless the "naive" board reports `naive: true` in `GET /api/state`. `state()` in `src/server.js` returns `naive` (true only when the flag is set), so a correctly started naive board passes this check. `--allow-unverified-naive` skips it; use it only if you know the server runs naive.
 
 What the flag does:
 
 | Area | Lean (default) | Naive |
 | --- | --- | --- |
-| CLI launch flags | `CLAUDE_LEAN` / `CODEX_LEAN` (`src/config.js`) | lean lists empty. `-c windows.sandbox="unelevated"` stays (correctness fix for the Store `pwsh` alias, not a token lever) |
+| CLI token-trimming flags | `CLAUDE_TOKEN` / `CODEX_TOKEN` (`src/config.js`) | dropped (`--disable-slash-commands`, `--exclude-dynamic-system-prompt-sections`, Codex `features.*=false` and `web_search`). The isolation flags stay in both arms (`CLAUDE_ISOLATION` / `CODEX_ISOLATION`: `--strict-mcp-config`, `--setting-sources ''`, `--ignore-user-config`, `features.hooks=false`), so user MCP servers, plugins and hooks are off in both. `-c windows.sandbox="unelevated"` stays in both as well |
 | Scout | optional, own thread, brief shared with everyone | ignored; every seat reads the code itself |
 | Round 1 | `tools: 'none'` when a brief exists | read tools, target attached |
 | Rounds 2..N | unseen messages only, resumed per-room thread, no tools, effort capped at `medium`, silent agreement skips | full transcript every turn on a fresh CLI thread, read tools, no effort cap, nobody skips |
@@ -66,7 +66,7 @@ The permission model (`--tools Read Grep Glob`, `sandbox_mode="read-only"`) is i
    Progress goes to stderr (one line per finished turn with uncached/cached tokens), the Markdown report to stdout and `results/<timestamp>/token-bench.md`, raw rooms/metrics to `token-bench.json` next to it. Exit code 0 when every run ended `done`, 1 on a failed or timed-out run, 2 for usage/preflight refusals.
 6. Ablations, so each lever gets its own share (each is a separate lean-arm run against the same naive arm; record which):
    - `--scout none`: unseen-only transcripts + no-tools discussion rounds + lean flags + early stop, without the brief (round 1 then reads the code).
-   - lean flags only: needs one more switch that the flag does not provide (e.g. `ORCHESTRA_NAIVE=flags`: lean flags on, workflow levers off); follow-up work.
+   - token-trimming flags only: not measurable with the current switch, which drops only the token-trimming flags and keeps isolation. The MCP/plugin/hook share of the per-call saving is outside what this bench measures; a separate switch (e.g. `ORCHESTRA_NAIVE=flags`) would be follow-up work.
    - early stop off: pick a topic where seats disagree, or compare the `Early stop` column across runs; it did not fire in the published observation anyway.
 7. Publish `token-bench.md`, `token-bench.json`, the commit hash, and `claude --version` / `codex --version` (the script does not read CLI versions; the board announces them only on the SSE `cli` event at startup). Quote the mean with the min–max spread, never a single run. Until then every asset calls 1.69M -> 0.46M a single before/after observation.
 

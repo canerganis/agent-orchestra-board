@@ -31,7 +31,7 @@ node bin/agent-orchestra-board.js /path/to/your/project --open
 
 The terminal prints a URL like `http://localhost:4317/?t=...`. Open that one (or pass `--open`); the token in it is exchanged for a session cookie on first load.
 
-`npx agent-orchestra-board` will work once the package is published to npm. It is **not published yet**, so use the clone above. Do not run `npx orchestra-board`: that name belongs to an unrelated project. (Known gap: the rename is not finished in the program's own text yet. `--help`, error prefixes, the `doctor` hint and a few UI strings still print "orchestra-board" / "Orchestra Board"; the command to type is always `agent-orchestra-board` or `aob`.)
+`npx agent-orchestra-board` will work once the package is published to npm. It is **not published yet**, so use the clone above. Do not run `npx orchestra-board`: that name belongs to an unrelated project. The command to type is `agent-orchestra-board` or `aob`.
 
 ```
 node bin/agent-orchestra-board.js [projectDir] [--port <n>] [--open]   # projectDir defaults to the current directory
@@ -76,7 +76,7 @@ The levers, all on by default:
 
 **Read this before quoting it.** It is **one run per arm on one machine** (Windows 11, Claude Code 2.1.291, Codex CLI 0.160.0, 2026-10-07), not a benchmark. The "before" ran on older code that is not in this repository and also had bugs fixed later, so the difference mixes the token levers with other changes. "Total" means every input token the CLIs reported, cache reads included, plus output; it is the only figure both runs have, because the old board stored one undivided count per turn. The after run was 204,374 uncached + 257,166 cached. Early stop did not fire in either run, and the after run predates the effort cap (Sol still ran round 2 at `high`). Output quality was not measured. My impression is that the scout brief was the biggest saving, but the levers were not measured separately. The trade-off: only the scout reads code, so a shallow brief misleads every seat, and the `file:line` citations in later rounds are copied from it, not re-checked.
 
-The raw rooms (sanitized) and a script that recomputes every number are in [docs/measurements/2026-10-07/](docs/measurements/2026-10-07/README.md). [bench/](bench/README.md) has a harness for a repeatable lean-vs-naive comparison (a second board started with `ORCHESTRA_NAIVE=1`; it also needs `naive` in `GET /api/state`, see its README); no result from it has been published yet.
+The raw rooms (sanitized) and a script that recomputes every number are in [docs/measurements/2026-10-07/](docs/measurements/2026-10-07/README.md). [bench/](bench/README.md) has a harness for a repeatable lean-vs-naive comparison (a second board started with `ORCHESTRA_NAIVE=1`, which reports `naive: true` in `GET /api/state`; see its README); no result from it has been published yet.
 
 ## Safety and permissions
 
@@ -109,7 +109,9 @@ Windows 11 is the primary development platform.
 
 **Does it need an API key?** No. It shells out to the `claude` and `codex` CLIs you are already logged into.
 
-**Which models?** The ones your CLIs offer. Type any name or alias your CLI accepts; effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex).
+**Which models?** The ones your CLIs offer. Type any name or alias your CLI accepts; effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex). Claude Haiku 5.5 (`claude-haiku-5-5`) is supported from day one: it is the cheap default for the usage probe and for a Claude scout. The CLI may print an `unrecognized_model` warning for it; the call still succeeds.
+
+**Can I change the model or effort for one session?** Yes. *New session* has an optional "Model and effort for this session" block per participant. It applies to that session only (the seat keeps its settings), and *Run again* keeps it. The Debate discussion rounds are capped at `medium` effort by default; turn off *Settings -> Cap effort in discussion rounds* to let each seat use its own effort there (more tokens).
 
 **Can agents reply in my language?** Yes. The UI is English; set *Settings -> Agents reply in* (or `ORCHESTRA_LANG`) and every seat is told to reply in it.
 
@@ -123,7 +125,7 @@ Windows 11 is the primary development platform.
 
 **The page says "Session required".** Open the URL printed in the terminal (it ends in `/?t=...`), or restart with `--open`.
 
-**Something is off. Where do I look?** `doctor`, then the room's *items* panel (tool calls, reasoning, errors), then `GET /api/state` from the authenticated browser.
+**Something is off. Where do I look?** `doctor`, then the room: tool-call lines appear under a running message and a failed turn shows its error on the message. Then the *Workflow and usage* inspector (the right-hand panel), then `GET /api/state` from the authenticated browser.
 
 ## Development
 

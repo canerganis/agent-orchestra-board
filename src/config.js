@@ -3,7 +3,7 @@ const DEFAULT_PORT = 4317;
 
 const MODELS = {
   codex: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra'],
-  claude: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-4-5-20251001'],
+  claude: ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-fable-5-1', 'claude-haiku-4-5-20251001', 'claude-haiku-5-5'],
 };
 const EFFORTS = { codex: ['low', 'medium', 'high', 'xhigh'], claude: ['low', 'medium', 'high', 'xhigh', 'max'] };
 const COLORS = ['#e07a52', '#7aa2ff', '#ffcc4d', '#b48cff', '#4fd1a5', '#ff7aa8', '#5ad1e6'];
@@ -32,12 +32,20 @@ const CLAUDE_LEAN = [...CLAUDE_ISOLATION, ...CLAUDE_TOKEN];
 // tools mode: 'none' (discussion), 'read' (look at code), 'write' (seat must allow it).
 const CLAUDE_TOOLS = { none: [''], read: ['Read', 'Grep', 'Glob'], write: ['Read', 'Grep', 'Glob', 'Edit', 'Write'] };
 // A tiny Haiku call is the only way to get Claude's rate_limit_event; it costs under $0.01 (lean launch, ~7k tokens).
-const CLAUDE_PROBE_MODEL = 'claude-haiku-4-5-20251001';
+// Claude Haiku 5.5 is the cheap default: the usage probe and the default model of a Claude scout (New session).
+// The CLI prints an 'unrecognized_model' warning for this id on some builds; the call still succeeds, and warnings on
+// stderr or non-JSON lines are never read as errors (the turn fails only without a completed result).
+// Not verified against the real CLI yet: if the 5.5 probe ends in an error result without a rate_limit_event, the
+// usage probe retries once with CLAUDE_PROBE_FALLBACK_MODEL (the id the probe used before 5.5, known to work).
+const CLAUDE_CHEAP_MODEL = 'claude-haiku-5-5';
+const CLAUDE_PROBE_MODEL = CLAUDE_CHEAP_MODEL;
+const CLAUDE_PROBE_FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
 
 // CLI executables; overridable so tests can point at fake CLIs.
 const claudeBin = () => process.env.ORCHESTRA_CLAUDE_BIN || 'claude';
 const codexBin = () => process.env.ORCHESTRA_CODEX_BIN || 'codex';
 
+// capEffort (absent or true): Debate discussion rounds run at most at 'medium' effort; false = every turn uses the seat's own effort.
 const defaultSettings = () => ({ lang: process.env.ORCHESTRA_LANG || 'English' });
 
 // ORCHESTRA_NAIVE=1: the un-optimized baseline, used only by the token benchmark to measure what the token-lean
@@ -83,7 +91,7 @@ const defaultSeats = () => DEFAULT_SEATS.map((s) => ({ perm: 'read', target: '',
 
 module.exports = {
   DEFAULT_PORT, MODELS, EFFORTS, COLORS, DEFAULT_SEATS, PERSISTED,
-  CODEX_LEAN, CLAUDE_LEAN, CLAUDE_ISOLATION, CODEX_ISOLATION, CLAUDE_TOKEN, CODEX_TOKEN, CLAUDE_TOOLS, CLAUDE_PROBE_MODEL,
+  CODEX_LEAN, CLAUDE_LEAN, CLAUDE_ISOLATION, CODEX_ISOLATION, CLAUDE_TOKEN, CODEX_TOKEN, CLAUDE_TOOLS, CLAUDE_PROBE_MODEL, CLAUDE_PROBE_FALLBACK_MODEL, CLAUDE_CHEAP_MODEL,
   claudeBin, codexBin, defaultSettings, defaultSeats,
   naive, claudeLean, codexLean, RETRY_DELAYS_MS, retryDelays, IDLE_MINUTES, idleTimeoutMs,
 };

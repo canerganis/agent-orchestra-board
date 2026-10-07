@@ -182,21 +182,30 @@ test('codex: usage math = input - cached + output, cost always 0; a turn without
   for (const u of only(second.events, 'usage')) assert.deepEqual(u[0], { tokens: 0, cached: 0, cost: 0 });
 });
 
-test('codex: turn.failed and top-level error report the message; real item errors become error items; filtered ones vanish', () => {
+test('codex: turn.failed reports its message; real item errors become error items; filtered ones vanish', () => {
   const { parser, events } = collect(codex);
   parser.feed(JSON.stringify({ type: 'item.completed', item: { type: 'error', message: 'Rate limit reached for gpt-6-luna' } }) + '\n');
   parser.feed(JSON.stringify({ type: 'item.completed', item: { type: 'error', message: 'ignoring unknown config key x' } }) + '\n');
   parser.feed(JSON.stringify({ type: 'turn.failed', error: { message: 'stream disconnected' } }) + '\n');
   parser.feed(JSON.stringify({ type: 'error', message: 'unexpected status 500' }) + '\n');
   parser.feed(JSON.stringify({ type: 'turn.failed' }) + '\n');
-  assert.deepEqual(events.slice(0, 3), [
+  // The top-level error after turn.failed is an item only; the bare turn.failed still yields a non-empty error.
+  assert.deepEqual(events, [
     ['item', 'error', 'Rate limit reached for gpt-6-luna'],
     ['error', 'stream disconnected'],
-    ['error', 'unexpected status 500'],
+    ['item', 'error', 'unexpected status 500'],
+    ['error', 'codex error'],
   ]);
-  assert.equal(events.length, 4);
-  assert.equal(events[3][0], 'error');
-  assert.ok(typeof events[3][1] === 'string' && events[3][1].length > 0, 'a turn.failed without a message still yields a non-empty error');
+});
+
+const topLevel = (...lines) => { const { parser, events } = collect(codex); for (const l of lines) parser.feed(JSON.stringify(l) + '\n'); parser.end(); return events; };
+test('codex: a top-level error is an item at once and an error only when no turn.completed/turn.failed follows', () => {
+  // Alone: shown at once, reported as the turn error by end().
+  assert.deepEqual(topLevel({ type: 'error', message: 'unexpected status 500' }), [['item', 'error', 'unexpected status 500'], ['error', 'unexpected status 500']]);
+  // Followed by turn.completed: the stream recovered, not a failure.
+  assert.deepEqual(topLevel({ type: 'error', message: 'Reconnecting' }, { type: 'turn.completed', usage: {} }).filter((e) => e[0] === 'error'), []);
+  // After turn.failed: an item only.
+  assert.deepEqual(topLevel({ type: 'turn.failed', error: { message: 'x' } }, { type: 'error', message: 'late' }).filter((e) => e[0] === 'error'), [['error', 'x']]);
 });
 
 test('codex: noise lines between events are ignored', () => {
@@ -221,7 +230,7 @@ test('both parsers: handlers are optional (no throw when none is given) and even
 test('buildProbeArgs: Haiku, no --effort, no session persistence, no tools, lean flags', () => {
   const a = claude.buildProbeArgs();
   assert.ok(!a.includes('--effort'), 'Haiku takes no effort flag');
-  assert.ok(a.includes('claude-haiku-4-5-20251001') && a.includes('--no-session-persistence') && a.includes('--strict-mcp-config'));
+  assert.ok(a.includes('claude-haiku-5-5') && a.includes('--no-session-persistence') && a.includes('--strict-mcp-config'));
   assert.deepEqual(a.slice(-2), ['--tools', '']);
   assert.ok(!a.includes('--resume') && !a.includes('--session-id'));
 });

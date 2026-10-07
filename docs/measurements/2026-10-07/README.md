@@ -51,7 +51,7 @@ Per seat (total tokens): Claude 225,235 -> 28,087; Luna 809,204 -> 322,615 (incl
 
 ## Environment
 
-Windows 11, Claude Code CLI 2.1.291, Codex CLI 0.160.0, Node 24. **Caveat on the after run:** in `after.json`, Sol's round-2 discussion turn records effort `high`, but the current code caps discussion-round effort at `medium` (`capEffort` in `src/runner.js`, used by `meeting.js`). So the after run predates the effort cap, and its exact code is not in this repository either. The effort cap is therefore not one of the levers behind the 1.69M -> 0.46M figure. Seats at the time of the after run: the Claude seat at effort `medium`; Luna `gpt-6-luna`/medium, Sol `gpt-6.1-sol`/high, Astra `gpt-6-astra`/medium.
+Windows 11, Claude Code CLI 2.1.291, Codex CLI 0.160.0, Node 24. **Caveat on the after run:** in `after.json`, Sol's round-2 discussion turn records effort `high`, but the current code caps discussion-round effort at `medium` (`capEffort` in `src/workflows/meeting.js`). So the after run predates the effort cap, and its exact code is not in this repository either. The effort cap is therefore not one of the levers behind the 1.69M -> 0.46M figure. Seats at the time of the after run: the Claude seat at effort `medium`; Luna `gpt-6-luna`/medium, Sol `gpt-6.1-sol`/high, Astra `gpt-6-astra`/medium.
 
 ## How the files were prepared
 

@@ -41,6 +41,8 @@ after(async () => {
   try { await waitFor(() => seats.all().every((s) => !seats.rtOf(s.id).child), { timeout: 5000 }); } catch {}
   rmrf(dir);
 });
+// Token-trimming flags only: '-c' is shared with the isolation flags, so it is not a token marker.
+const TOKEN_FLAGS = [...config.CLAUDE_TOKEN, ...config.CODEX_TOKEN.filter((t) => !config.CODEX_ISOLATION.includes(t))];
 const callsOf = (name, from) => fake.calls().slice(from).filter((c) => c.seat === name);
 
 // ---------- pure units ----------
@@ -57,7 +59,7 @@ test('classifyFailure: transient vs auth vs lost thread vs other; usage limits a
   assert.match(authMessage('claude', 'x', 'running in bare mode'), /bare mode/);
 });
 
-test('config: retry delays default 3s/10s (env override), idle watchdog 5 min scaled by effort (settings/env override)', () => {
+test('config: retry delays default 3s/10s (env override), idle watchdog 5 min (10 for Codex) scaled by effort (settings/env override)', () => {
   const env = { r: process.env.ORCHESTRA_RETRY_DELAYS_MS, i: process.env.ORCHESTRA_IDLE_MINUTES };
   try {
     delete process.env.ORCHESTRA_RETRY_DELAYS_MS; delete process.env.ORCHESTRA_IDLE_MINUTES;
@@ -67,6 +69,12 @@ test('config: retry delays default 3s/10s (env override), idle watchdog 5 min sc
     assert.equal(config.idleTimeoutMs('medium'), 5 * 60000);
     assert.equal(config.idleTimeoutMs('high'), 10 * 60000);
     assert.equal(config.idleTimeoutMs('xhigh'), 15 * 60000);
+    assert.equal(config.idleTimeoutMs('medium', null, 'codex'), 10 * 60000, 'Codex default is 10 min');
+    assert.equal(config.idleTimeoutMs('high', null, 'codex'), 20 * 60000, 'Codex keeps the effort factor');
+    assert.equal(config.idleTimeoutMs('medium', null, 'claude'), 5 * 60000);
+    assert.equal(config.idleTimeoutMs('medium', { idleMinutes: 3 }, 'codex'), 3 * 60000, 'settings win over the Codex default');
+    assert.equal(config.idleTimeoutMs('medium', { idleMinutes: 0 }, 'codex'), 0, 'settings 0 = watchdog off');
+    assert.equal(config.idleTimeoutMs('medium', { idleMinutes: 'off' }, 'codex'), 0, 'settings off = watchdog off');
     assert.equal(config.idleTimeoutMs('low', { idleMinutes: 2 }), 2 * 60000);
     process.env.ORCHESTRA_IDLE_MINUTES = '1'; assert.equal(config.idleTimeoutMs('low'), 60000);
   } finally {
@@ -85,7 +93,7 @@ test('claude args: read/none turns pass --permission-mode dontAsk, write acceptE
   assert.ok(!p.includes('--effort')); assert.deepEqual(p.slice(-2), ['--tools', '']);
 });
 
-test('ORCHESTRA_NAIVE=1 drops the lean launch flags (and only those) for both CLIs', () => {
+test('ORCHESTRA_NAIVE=1 drops only the token flags; the isolation flags stay for both CLIs', () => {
   const prev = process.env.ORCHESTRA_NAIVE;
   try {
     delete process.env.ORCHESTRA_NAIVE;
@@ -94,8 +102,10 @@ test('ORCHESTRA_NAIVE=1 drops the lean launch flags (and only those) for both CL
     process.env.ORCHESTRA_NAIVE = '1';
     assert.equal(config.naive(), true);
     const c = claudeAdapter.buildArgs({ model: 'm', effort: 'low' }), x = codexAdapter.buildArgs({ model: 'm', effort: 'low' });
-    assert.ok(!c.includes('--strict-mcp-config') && !c.includes('--disable-slash-commands'));
-    assert.ok(!x.includes('--ignore-user-config') && !x.some((s) => s.startsWith('features.')));
+    assert.ok(c.includes('--strict-mcp-config') && c.includes('--setting-sources'), 'Claude isolation stays');
+    assert.ok(!c.some((s) => TOKEN_FLAGS.includes(s)), 'Claude token flags dropped');
+    assert.ok(x.includes('--ignore-user-config') && x.includes('features.hooks=false'), 'Codex isolation stays');
+    assert.ok(!x.some((s) => TOKEN_FLAGS.includes(s)), 'Codex token flags dropped');
     assert.equal(x.includes('windows.sandbox="unelevated"'), process.platform === 'win32', 'the Windows sandbox fix stays');
     assert.ok(c.includes('dontAsk') && x.includes('sandbox_mode="read-only"'), 'permissions are identical');
   } finally { if (prev === undefined) delete process.env.ORCHESTRA_NAIVE; else process.env.ORCHESTRA_NAIVE = prev; }
@@ -130,7 +140,11 @@ testWithFake(fake, 'transient failure: retried on the same thread with backoff, 
   assert.equal(res.ok, true); assert.equal(res.text, 'third time lucky');
   const calls = callsOf('Ada', 1);
   assert.equal(calls.length, 3);
-  for (const c of calls) { assert.equal(c.resume, true); assert.equal(c.args[c.args.indexOf('--resume') + 1], thread, 'same thread'); assert.equal(c.stdin, 'try hard'); }
+  // The first attempt sends the prompt; retries on the same resumed thread ask again without re-sending it (the CLI
+  // already stored it once the thread was reported).
+  assert.equal(calls[0].stdin, 'try hard');
+  for (const c of calls) { assert.equal(c.resume, true); assert.equal(c.args[c.args.indexOf('--resume') + 1], thread, 'same thread'); }
+  for (const c of calls.slice(1)) assert.match(c.stdin, /previous reply was interrupted/);
   assert.equal(seats.seatById('ada').thread, thread);
   const acts = events.slice(n).filter((e) => e.t === 'seat' && e.seat.id === 'ada').map((e) => e.seat.activity);
   assert.ok(acts.includes('retrying (1/2)') && acts.includes('retrying (2/2)'), acts.join(' | '));
@@ -168,6 +182,15 @@ testWithFake(fake, 'idle watchdog: a silent turn is killed (process tree dies) a
   const r2 = await once.runSeat('bob', 'never answers');
   assert.equal(r2.ok, false); assert.equal(r2.failure, 'transient'); assert.match(r2.error, /no output for .* min \(idle watchdog\); the process was killed/);
   assert.equal(callsOf('Bob', 0).length, 1);
+});
+
+testWithFake(fake, 'idle watchdog disabled (idleMs 0): a normal turn completes without any watchdog kill', async () => {
+  fake.resetCalls();
+  const noDog = createRunner({ store, seats, limits, settings: { lang: 'English' }, broadcast: () => {}, retryDelaysMs: [], idleMs: 0 });
+  fake.scenario({ default: { reply: 'no watchdog needed' } });
+  const res = await noDog.runSeat('bob', 'take your time');
+  assert.equal(res.ok, true); assert.equal(res.text, 'no watchdog needed');
+  assert.equal(callsOf('Bob', 0).length, 1, 'one spawn, not killed and retried');
 });
 
 testWithFake(fake, 'stopping a seat while it waits to retry ends the turn as stopped without another spawn', async () => {
@@ -302,7 +325,8 @@ testWithFake(fake, 'ORCHESTRA_NAIVE=1 debate: no scout, full transcript on a fre
       // Ada sees rounds 1-2 (4 messages, her own included); Bob, speaking after her, also her round-3 reply.
       assert.equal((c.stdin.match(/Agreed\./g) || []).length, 4 + i, 'every earlier message, own ones included');
       if (c.agent === 'claude') assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob']);
-      assert.ok(!c.args.includes('--strict-mcp-config') && !c.args.includes('--ignore-user-config'), 'no lean flags');
+      assert.ok(!c.args.some((a) => TOKEN_FLAGS.includes(a)), 'no token flags');
+      assert.ok(c.args.includes(c.agent === 'claude' ? '--strict-mcp-config' : '--ignore-user-config'), 'isolation flags stay');
     });
     const synth = calls.find((c) => /You are the facilitator/.test(c.stdin));
     assert.equal((synth.stdin.match(/Agreed\./g) || []).length, 6);

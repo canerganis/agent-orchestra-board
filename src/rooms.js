@@ -41,18 +41,23 @@ function createRooms({ store, seats, runner, broadcast }) {
   async function say(room, seatId, prompt, meta = {}) {
     const seat = seatById(seatId);
     if (!seat) { sys(room, `Agent "${seatId}" no longer exists; turn skipped.`); return { ok: false, error: 'no such agent', text: '' }; }
+    // Per-session overrides (New session modal) live on the room; the seat's own model and effort are the default.
+    const ov = room.overrides?.[seatId] || {};
+    const effort = meta.effort || ov.effort || seat.effort;
+    // The seat's session override applies to every turn it takes; meta.model is a turn-only default (the scout's).
+    const model = ov.model || meta.model || null;
     const m = post(room, { seatId, name: seat.name, color: seat.color, agent: seat.agent, round: meta.round || room.round, label: meta.label || '', text: '', streaming: true });
     // Direct messages use the seat's long-lived thread; meetings and chains get a fresh thread per room.
     // recovery/onRecover: if the CLI lost the thread, the runner starts a fresh one with this recap and we note it.
     let res;
     try {
       res = await runner.runSeat(seatId, prompt, {
-        effort: meta.effort, runId: m.id, roomId: room.id, room: room.kind === 'dm' ? null : room, tools: meta.tools, withTarget: meta.withTarget ?? true, threadKey: meta.threadKey, cancelled: meta.cancelled,
+        effort, model, runId: m.id, roomId: room.id, room: room.kind === 'dm' ? null : room, tools: meta.tools, withTarget: meta.withTarget ?? true, threadKey: meta.threadKey, cancelled: meta.cancelled,
         recovery: () => recoveryPreamble(room, m, prompt), onRecover: (note) => sys(room, note, { recovery: { seatId, msgId: m.id } }),
       });
     } catch (e) { res = { ok: false, error: `internal error: ${(e && e.message) || e}`, text: '', failure: 'other' }; } // a turn never stalls a workflow
     // failed: the workflow view marks this node failed; the meeting/chain continues with the others.
-    Object.assign(m, { text: res.text || '', error: res.ok ? null : res.error, failed: !res.ok, failure: res.ok ? null : res.failure || null, streaming: false, ended: now(), tokens: res.tokens, cached: res.cached, cost: res.cost, effort: meta.effort || seat.effort, tools: meta.tools || null });
+    Object.assign(m, { text: res.text || '', error: res.ok ? null : res.error, failed: !res.ok, failure: res.ok ? null : res.failure || null, streaming: false, ended: now(), tokens: res.tokens, cached: res.cached, cost: res.cost, effort, model: model || seat.model, tools: meta.tools || null });
     if (live(room)) broadcast({ t: 'msg', roomId: room.id, msg: m });
     room.usage = roomUsage(room); pushRoom(room);
     return { ...res, msg: m };

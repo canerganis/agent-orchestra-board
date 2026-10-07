@@ -1,13 +1,20 @@
 // Debate workflow: optional scout brief -> parallel round 1 -> discussion rounds (early stop on STANCE: CONVERGED) -> optional synthesis.
-const { EFFORTS, naive } = require('../config');
+const { EFFORTS, naive, CLAUDE_CHEAP_MODEL } = require('../config');
 const { today, lastLine, clip } = require('../util');
 
-function createMeeting({ store, seats, rooms }) {
+function createMeeting({ store, seats, rooms, settings = {} }) {
   const { seatById } = seats;
   const { say, sys, pushRoom, roomUsage, buildContext, NOT_DELIVERED } = rooms;
 
   // Short replies from context do not need deep reasoning; reasoning tokens dominate output cost.
-  const capEffort = (seatId, cap) => { const s = seatById(seatId); if (!s) return cap; const l = EFFORTS[s.agent]; return l[Math.min(l.indexOf(s.effort), l.indexOf(cap))] || cap; };
+  // The seat's effort (or its per-session override on the room) capped at `cap`. Setting capEffort off (settings.json,
+  // default on) returns the uncapped effort for every discussion turn.
+  const capEffort = (seatId, cap, room = null) => {
+    const s = seatById(seatId); if (!s) return cap;
+    const base = room?.overrides?.[seatId]?.effort || s.effort;
+    if (settings.capEffort === false) return base;
+    const l = EFFORTS[s.agent]; return l[Math.min(l.indexOf(base), l.indexOf(cap))] || cap;
+  };
 
   // Token-lean meeting:
   //  1. optional scout reads the code once and writes a shared brief (the only step with tools),
@@ -51,7 +58,7 @@ function createMeeting({ store, seats, rooms }) {
     let brief = '';
     if (scoutId) {
       room.round = 'scout'; pushRoom(room);
-      const res = await say(room, scoutId, `Scout task for a meeting. Topic:\n${topic}${ctx}\n\nRead only what is relevant inside your target scope. Write a factual brief for the other participants (max 350 words): key facts, relevant files with file:line, constraints, unknowns. No opinions or recommendations.`, { round: 'scout', label: 'scout brief', tools: 'read', threadKey: scoutId + ':scout' }); // own thread: the files it read must not ride along in later rounds
+      const res = await say(room, scoutId, `Scout task for a meeting. Topic:\n${topic}${ctx}\n\nRead only what is relevant inside your target scope. Write a factual brief for the other participants (max 350 words): key facts, relevant files with file:line, constraints, unknowns. No opinions or recommendations.`, { round: 'scout', label: 'scout brief', tools: 'read', threadKey: scoutId + ':scout', model: seatById(scoutId)?.agent === 'claude' ? CLAUDE_CHEAP_MODEL : null }); // turn-only default; a session override on the seat wins // own thread: the files it read must not ride along in later rounds
       if (res.ok && res.text) brief = res.text;
       else if (!room.stopped && res.error !== 'stopped') sys(room, `Scout ${nameOf(scoutId)} failed (${clip(res.error || 'no brief', 160)}); round 1 runs without a brief and reads the code itself.`);
       // The brief goes into round 1 prompts; user notes posted meanwhile stay unseen so round 2 delivers them.
@@ -84,7 +91,7 @@ function createMeeting({ store, seats, rooms }) {
           // Silent agreement: a converged seat skips its turn when everything new is also converged.
           if (lastStance[id] && fresh.length && fresh.every((m) => converged(m.text))) { sys(room, `✓ ${seatById(id)?.name} agreed silently (turn skipped).`, { skip: { seatId: id, round: r } }); stances.push(true); continue; }
           res = await say(room, id, `${hasThread(id) ? '' : background()}Round ${r} of ${rounds}. New messages since your last turn:\n\n${fmt(fresh) || '(nothing new)'}\n\nRespond as in a live meeting: build on, challenge (name who and why) or merge. Max 120 words. End with exactly one line: "STANCE: CONVERGED" if you would sign the current direction, otherwise "STANCE: OPEN".`,
-            { round: r, label: 'discussion', tools: 'none', withTarget: false, effort: capEffort(id, 'medium') });
+            { round: r, label: 'discussion', tools: 'none', withTarget: false, effort: capEffort(id, 'medium', room) });
           if (res.ok) fresh.forEach((m) => seen[id].add(m.id));
         }
         noteFailure(id, r, res);

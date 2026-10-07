@@ -4,7 +4,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { MODELS, EFFORTS, DEFAULT_PORT, defaultSettings } = require('./config');
+const { MODELS, EFFORTS, DEFAULT_PORT, defaultSettings, naive } = require('./config');
 const { createStore } = require('./store');
 const { createLimits } = require('./limits');
 const { createSeats } = require('./seats');
@@ -54,7 +54,7 @@ function body(req) {
   });
 }
 const json = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
-const UNAUTH_HTML = '<!doctype html><meta charset="utf-8"><title>Orchestra Board</title><body style="font:15px system-ui;padding:40px;max-width:560px"><h2>Session required</h2><p>This board accepts one browser session per project. Open the link printed in the terminal where Orchestra Board was started (it ends in <code>/?t=&hellip;</code>), or restart the board with <code>--open</code>.</p></body>';
+const UNAUTH_HTML = '<!doctype html><meta charset="utf-8"><title>Agent Orchestra Board</title><body style="font:15px system-ui;padding:40px;max-width:560px"><h2>Session required</h2><p>This board accepts one browser session per project. Open the link printed in the terminal where Agent Orchestra Board was started (it ends in <code>/?t=&hellip;</code>), or restart the board with <code>--open</code>.</p></body>';
 
 function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
   const PORT = Number(port) || DEFAULT_PORT;
@@ -75,7 +75,7 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
   const seats = createSeats({ store, broadcast });
   const runner = createRunner({ store, seats, limits, settings, broadcast });
   const rooms = createRooms({ store, seats, runner, broadcast });
-  const { runMeeting } = createMeeting({ store, seats, rooms });
+  const { runMeeting } = createMeeting({ store, seats, rooms, settings });
   const { runChain } = createChain({ store, seats, rooms, broadcast });
   const { seatById, publicSeat, rtOf } = seats;
   const { pushRoom, sys, userMsg, newRoom } = rooms;
@@ -85,10 +85,32 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
       project: PROJECT, models: MODELS, efforts: EFFORTS,
       seats: seats.all().map(publicSeat),
       rooms: [...rooms.rooms.values()].sort((a, b) => b.created.localeCompare(a.created)).slice(0, 25),
-      limits: limits.get(), settings,
+      limits: limits.get(), settings, naive: naive(),
     };
   }
   const ids = (arr) => arr.filter((id) => seatById(id));
+  // Per-session overrides from the New session modal: { seatId: { model?, effort? } }, validated like seats (a CLI
+  // model name, an effort the seat's CLI supports). Empty values mean the seat's own setting. Only real seats.
+  function overridesOf(raw) {
+    if (raw === undefined || raw === null) return {};
+    if (typeof raw !== 'object' || Array.isArray(raw)) throw new Error('overrides must be an object keyed by agent id');
+    const out = {};
+    for (const [id, o] of Object.entries(raw)) {
+      const seat = seatById(id); if (!seat) throw new Error('no such agent');
+      if (!o || typeof o !== 'object' || Array.isArray(o)) throw new Error('each override must be an object');
+      const e = {};
+      if (o.model !== undefined && o.model !== null && o.model !== '') {
+        if (typeof o.model !== 'string' || !/^[\w.:\-\[\]]{1,64}$/.test(o.model)) throw new Error('invalid model name');
+        e.model = o.model;
+      }
+      if (o.effort !== undefined && o.effort !== null && o.effort !== '') {
+        if (!EFFORTS[seat.agent].includes(o.effort)) throw new Error(`effort "${o.effort}" is not supported by ${seat.name}`);
+        e.effort = o.effort;
+      }
+      if (Object.keys(e).length) out[id] = e;
+    }
+    return out;
+  }
   const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, x]) => x !== undefined));
 
   // ---------- http ----------
@@ -162,7 +184,8 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
         if (seatIds.length < 2 || !topic) return json(res, 400, { error: 'Pick at least 2 participants and write a topic' });
         const rounds = v.int(b.rounds, 'rounds', { min: 1, max: 5, def: 2 });
         const synthId = v.id(b.synthId, 'synthId'), scoutId = v.id(b.scoutId, 'scoutId');
-        const room = newRoom('meeting', topic.slice(0, 60), { topic, seatIds, rounds, synthId: seatById(synthId) ? synthId : null, scoutId: seatById(scoutId) ? scoutId : null, withContext: v.bool(b.withContext, 'withContext') });
+        let overrides; try { overrides = overridesOf(b.overrides); } catch (e) { return json(res, 400, { error: e.message }); }
+        const room = newRoom('meeting', topic.slice(0, 60), { topic, seatIds, rounds, synthId: seatById(synthId) ? synthId : null, scoutId: seatById(scoutId) ? scoutId : null, withContext: v.bool(b.withContext, 'withContext'), overrides });
         userMsg(room, topic); runMeeting(room).catch((e) => { sys(room, '⚠ ' + e.message); room.status = 'error'; pushRoom(room); });
         return json(res, 200, { roomId: room.id });
       }
@@ -171,7 +194,8 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
         const builderId = v.id(b.builderId, 'builderId'), reviewerId = v.id(b.reviewerId, 'reviewerId');
         if (!seatById(builderId) || !seatById(reviewerId) || builderId === reviewerId || !task) return json(res, 400, { error: 'Pick two different agents and write a task' });
         const maxRounds = v.int(b.maxRounds, 'maxRounds', { min: 1, max: 6, def: 3 });
-        const room = newRoom('chain', task.slice(0, 60), { task, builderId, reviewerId, maxRounds, escalate: v.bool(b.escalate, 'escalate'), withContext: v.bool(b.withContext, 'withContext') });
+        let overrides; try { overrides = overridesOf(b.overrides); } catch (e) { return json(res, 400, { error: e.message }); }
+        const room = newRoom('chain', task.slice(0, 60), { task, builderId, reviewerId, maxRounds, escalate: v.bool(b.escalate, 'escalate'), withContext: v.bool(b.withContext, 'withContext'), overrides });
         userMsg(room, task); runChain(room).catch((e) => { sys(room, '⚠ ' + e.message); room.status = 'error'; pushRoom(room); });
         return json(res, 200, { roomId: room.id });
       }
@@ -181,6 +205,7 @@ function createServer({ projectDir, port = DEFAULT_PORT } = {}) {
           if (!/^[\p{L} ()-]{2,30}$/u.test(lang)) return json(res, 400, { error: 'lang must be a language name (2-30 letters)' });
           settings.lang = lang;
         }
+        if (b.capEffort !== undefined) settings.capEffort = v.bool(b.capEffort, 'capEffort');
         store.writeJson('settings.json', settings); broadcast({ t: 'settings', settings });
         return json(res, 200, settings);
       }

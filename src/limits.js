@@ -2,7 +2,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { claudeBin } = require('./config');
+const { claudeBin, CLAUDE_PROBE_MODEL, CLAUDE_PROBE_FALLBACK_MODEL } = require('./config');
 const { killTree, spawnResolved } = require('./platform'); // the probe's cwd is the temp dir: resolve claude on PATH first
 const claude = require('./adapters/claude');
 const { spawnErrorMessage, explainExit, classifyFailure, authMessage } = require('./adapters/diagnose');
@@ -102,9 +102,18 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
   // the CLI's own error result (not logged in, invalid API key, ...), a clean turn without rate_limit_event
   // (API-key logins never report subscription windows), or an exit without any result (explained from the stream).
   let probing = null;
+  // The first probe uses CLAUDE_PROBE_MODEL. If it ends in an error result without a rate_limit_event (an unknown model
+  // id is the likely cause; auth errors are not retried), one retry runs on CLAUDE_PROBE_FALLBACK_MODEL.
   function probeClaude() {
     if (probing) return probing;
-    probing = new Promise((resolve) => {
+    probing = runClaudeProbe(CLAUDE_PROBE_MODEL, true)
+      .then((r) => (r.retryable ? runClaudeProbe(CLAUDE_PROBE_FALLBACK_MODEL, false) : r))
+      .then((r) => ({ ok: r.ok, error: r.error }))
+      .finally(() => { probing = null; });
+    return probing;
+  }
+  function runClaudeProbe(model, canRetry) {
+    return new Promise((resolve) => {
       const bin = claudeBin();
       let got = false, completed = false, turnError = null, spawnErr = null, stderr = '', done = false, timer = null;
       const parser = claude.createParser({
@@ -113,7 +122,7 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
         error: (m) => { turnError = String(m || 'claude error'); },
       });
       let probe;
-      try { probe = spawnFn(bin, claude.buildProbeArgs(), { cwd: os.tmpdir(), windowsHide: true }); }
+      try { probe = spawnFn(bin, claude.buildProbeArgs(model), { cwd: os.tmpdir(), windowsHide: true }); }
       catch (e) { const m = spawnErrorMessage('claude', bin, e, process.env); setError('claude', m); return resolve({ ok: false, error: m }); }
       const finish = (code, signal) => {
         if (done) return; done = true; clearTimeout(timer);
@@ -124,8 +133,10 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
         else if (turnError) error = `Claude limits probe failed: ${classifyFailure(`${turnError}\n${stderr}`) === 'auth' ? authMessage('claude', turnError, stderr) : turnError}`;
         else if (completed) error = 'Claude limits probe completed but got no rate_limit_event: the Claude CLI reports subscription usage windows only for a claude.ai login (API-key and cloud-provider logins have no such windows).';
         else error = `Claude limits probe got no rate_limit_event: ${explainExit({ agent: 'claude', bin, code, signal, stats: parser.stats, stderr })}`;
-        if (error) setError('claude', error);
-        resolve({ ok: !error, error });
+        const retryable = canRetry && !got && !spawnErr && !!turnError && classifyFailure(`${turnError}
+${stderr}`) !== 'auth';
+        if (error && !retryable) setError('claude', error); // a retryable failure is reported only if the retry fails too
+        resolve({ ok: !error, error, retryable });
       };
       timer = setTimeout(() => { spawnErr = `Claude limits probe did not finish within ${PROBE_TIMEOUT_MS / 1000}s`; try { killTree(probe); } catch {} finish(null, null); }, PROBE_TIMEOUT_MS);
       if (typeof timer.unref === 'function') timer.unref();
@@ -134,8 +145,7 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
       probe.on('error', (e) => { spawnErr = spawnErrorMessage('claude', bin, e, process.env); setTimeout(() => finish(null, null), 1000).unref?.(); });
       probe.on('close', finish);
       if (probe.stdin) { probe.stdin.on('error', () => {}); probe.stdin.end('Reply with: ok'); }
-    }).finally(() => { probing = null; });
-    return probing;
+    });
   }
 
   return { get: () => limits, setLimits, claudeLimits, readCodexLimits, refreshCodex, start, stop, probeClaude };

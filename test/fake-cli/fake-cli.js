@@ -13,6 +13,7 @@
 //   rule actions:   reply (text), usage ({input, cacheCreation, cacheRead, output, cost} | {input, cached, output}),
 //                   rateLimit (claude rate_limit_info object), thinking (bool), tool (bool), reasoning (text),
 //                   events (extra raw events emitted before the result), error (message -> failed turn),
+//                   warn (stderr text) and noise (a non-JSON stdout line) before a successful turn,
 //                   crash (stderr text; exits without a completed turn), exit (exit code), gate (name: wait for
 //                   <OB_FAKE_DIR>/gates/<name> before answering), delayMs, hang (never finishes),
 //                   lostThread (the resumed thread is gone: prints the CLI's own not-found message on stderr, no
@@ -171,6 +172,10 @@ async function main() {
   }
   if (rule.gate) await waitGate(rule.gate);
   if (rule.delayMs) await sleep(rule.delayMs);
+  // warn: a warning on stderr and noise (a non-JSON line on stdout) before a successful turn, as the CLI prints for
+  // unknown model ids; the turn must still succeed.
+  if (rule.warn) await write(process.stderr, String(rule.warn) + '\n');
+  if (rule.noise) await write(process.stdout, String(rule.noise) + '\n');
   await write(process.stdout, jsonl(ev.body));
   await write(process.stdout, jsonl(ev.tail));
   if (rule.crash) await write(process.stderr, String(rule.crash) + '\n');

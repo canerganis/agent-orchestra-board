@@ -102,7 +102,8 @@ test('codex: unknown types, undefined text never becomes "undefined", error shap
   parser.event({ type: 'turn.failed', error: 'plain string' });
   parser.event({ type: 'error', message: 'top-level message' });
   parser.event({ type: 'turn.failed' });
-  assert.deepEqual(events.filter((e) => e[0] === 'error').map((e) => e[1]), ['plain string', 'top-level message', 'codex error']);
+  // A top-level error after turn.failed is an item only; the next turn.failed reports its own message.
+  assert.deepEqual(events.filter((e) => e[0] === 'error').map((e) => e[1]), ['plain string', 'codex error']);
   parser.event({ type: 'turn.completed' });
   assert.deepEqual(events.filter((e) => e[0] === 'usage').map((e) => e[1]), [{ tokens: 2, cached: 10, cost: 0 }, { tokens: 0, cached: 0, cost: 0 }], 'one usage per turn.completed, zeros when missing');
 });

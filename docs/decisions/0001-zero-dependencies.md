@@ -6,7 +6,7 @@
 | Recorded | 2026-10-07, **retroactively**, by AI agents drafting from the commit history, `.orchestra/LOG.md` and the code; not written when the decision was made |
 | Decision made | approx. 2026-10-07, while building the first prototype, before commit `c75d465` ("Baseline: Orchestra Board prototype", 2026-10-07 22:19 +03:00) |
 | Decided by | Can Erganis (project owner). The record was drafted by agents; the decision was the owner's |
-| Evidence | `package.json` has no `dependencies` or `devDependencies` and `engines.node >= 20`; `src/` and `bin/` require only `http`, `child_process`, `fs`, `path`, `crypto`, `net`, `os`, `string_decoder` (tests add `node:test`, `events`, `stream`); `.github/workflows/ci.yml` runs `node --test` on Ubuntu, macOS and Windows with Node 20, 22 and 24 and has no install step |
+| Evidence | `package.json` has no `dependencies` or `devDependencies` and `engines.node >= 20`; `src/` and `bin/` require only `http`, `child_process`, `fs`, `path`, `crypto`, `net`, `os`, `string_decoder` (`src/platform.js` also requires `events`; tests add `node:test` and `stream`); `.github/workflows/ci.yml` runs `node --test` on Ubuntu, macOS and Windows with Node 20, 22 and 24 and has no install step |
 | Revisit when | the UI outgrows hand-rendering, the HTTP layer needs features that built-ins make painful (compression, HTTP/2), or the first dependency that would materially shrink `security.js` / `server.js` appears |
 
 ## Context

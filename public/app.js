@@ -298,6 +298,8 @@ const genericSteps = () => `<div class="setup-steps" role="list">
     <div class="hint">Run these in ${isWin ? 'PowerShell' : 'a terminal'}, then re-check. One CLI is enough if every agent uses it. Both use your own plan quota; the board never calls an API directly.</div></div>`;
 function setupHtml(firstRun) {
   const d = S.doctor, problems = doctorProblems();
+  // Warnings that do not block (e.g. a CLI not signed in): the all-clear is shown only when every check passed or was skipped.
+  const open = (d?.checks || []).filter((c) => c.st !== 'ok' && !c.skipped);
   const head = firstRun
     ? `<h2 id="setupTitle">Welcome — let's check your setup</h2><p class="lead">${APP} drives the Claude Code and Codex CLIs installed on this machine. Each CLI your agents use must be installed and signed in; one of the two is enough if all your agents use it.</p>`
     : `<h2 id="setupTitle">Setup check</h2>`;
@@ -305,7 +307,7 @@ function setupHtml(firstRun) {
   if (!d || d.loading && !d.checks.length) body = '<div class="hint" style="margin:10px 0">Checking the environment…</div>';
   else if (d.error) body = `<div class="checks"><div class="check fail"><span class="check-ic">${icon('x', 12)}</span><div class="check-b"><b>Could not run the check</b><div class="hint">${esc(d.error)}</div></div><span class="check-state">Failed</span></div></div><p class="hint">What a working setup needs:</p>${genericSteps()}`;
   else if (!d.checks.length) body = `<p class="hint" style="margin-top:8px">The environment check reported no results, so nothing could be verified automatically. Make sure both CLIs are installed and signed in:</p>${genericSteps()}`;
-  else body = `<div class="checks" role="list">${d.checks.map(checkRow).join('')}</div>${problems.length ? `<p class="hint">Fix the items marked <b>Missing</b>, <b>Failed</b> or <b>Blocked</b>, then re-check. Agents on a CLI the board cannot launch fail on every turn.</p>` : `<div class="ok-line">${icon('check', 14)}Everything looks good — start a session below.</div>`}`;
+  else body = `<div class="checks" role="list">${d.checks.map(checkRow).join('')}</div>${problems.length ? `<p class="hint">Fix the items marked <b>Missing</b>, <b>Failed</b> or <b>Blocked</b>, then re-check. Agents on a CLI the board cannot launch fail on every turn.</p>` : open.length ? `<p class="hint">${open.length} item${open.length === 1 ? '' : 's'} to check — agents on a CLI that is not signed in will fail.</p>` : `<div class="ok-line">${icon('check', 14)}Everything looks good — start a session below.</div>`}`;
   return `<section class="setup" aria-labelledby="setupTitle" aria-busy="${!!d?.loading}">${head}${body}
     <div class="setup-f"><button class="btn" id="setupRecheck" ${d?.loading ? 'disabled' : ''}>${icon('refresh', 14)}${d?.loading ? 'Checking…' : 'Re-check'}</button>
       ${problems.length ? '' : '<button class="btn ghost" id="setupHide">Hide</button>'}
@@ -510,8 +512,8 @@ function jumpTo(id) {
   t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true });
 }
 function roomPreset(r) {
-  if (r.kind === 'meeting') return { topic: r.topic, seatIds: r.seatIds, scoutId: r.scoutId, synthId: r.synthId, rounds: r.rounds, withContext: r.withContext };
-  if (r.kind === 'chain') return { task: r.task, builderId: r.builderId, reviewerId: r.reviewerId, maxRounds: r.maxRounds, escalate: r.escalate, withContext: r.withContext };
+  if (r.kind === 'meeting') return { topic: r.topic, seatIds: r.seatIds, scoutId: r.scoutId, synthId: r.synthId, rounds: r.rounds, withContext: r.withContext, overrides: r.overrides || {} };
+  if (r.kind === 'chain') return { task: r.task, builderId: r.builderId, reviewerId: r.reviewerId, maxRounds: r.maxRounds, escalate: r.escalate, withContext: r.withContext, overrides: r.overrides || {} };
   return { seatId: r.seatId };
 }
 function continueInDm(r) {
@@ -549,7 +551,8 @@ function msgHeadHtml(m, r) {
   if (m.seatId === 'user') return `<span class="who"><span class="name">You</span></span><span class="msg-stat">${hhmm(m.ts)}</span>`;
   const s = S.seats[m.seatId], agent = m.agent || s?.agent, isResult = m.id === r.resultId;
   const who = `<span class="who"><span class="cli">${esc(TOOL[agent] || 'Agent')}</span><span class="sep" aria-hidden="true">·</span><span class="name">${esc(m.name)}</span></span>`;
-  const model = s?.model && s.agent === agent ? `<span class="model">${esc(s.model)}</span>` : '';
+  const shown = m.model || (s?.agent === agent ? s?.model : ''); // the model the message ran on; the seat's for older messages
+  const model = shown ? `<span class="model">${esc(shown)}</span>` : '';
   // In a Debate the round marker already names the step (Ideas, Discussion, Synthesis); only the scout brief keeps its label.
   const role = m.label && !(r.kind === 'meeting' && m.round !== 'scout') ? `<span class="role">${esc(cap(m.label))}</span>` : '';
   const verdict = m.verdict ? `<span class="vt ${m.verdict === 'pass' ? 'pass' : 'fail'}">${icon(m.verdict === 'pass' ? 'check' : 'x', 12)}${m.verdict === 'pass' ? 'PASS' : 'FAIL'}</span>` : '';
@@ -852,7 +855,8 @@ function openHelp() {
 }
 
 // preset (from "Run again" / "Continue in Direct chat") uses room field names; stored values use form names.
-const PRESET_MAP = { seatIds: 'participants', scoutId: 'scout', synthId: 'facilitator', rounds: 'rounds', withContext: 'ctx', builderId: 'builder', reviewerId: 'reviewer', maxRounds: 'max', escalate: 'escalate', seatId: 'seat', topic: 'topic', task: 'task', message: 'message' };
+const CHEAP_MODEL = 'claude-haiku-5-5'; // the server runs a Claude scout's brief on this model unless the seat has a session override (config.js)
+const PRESET_MAP = { seatIds: 'participants', scoutId: 'scout', synthId: 'facilitator', rounds: 'rounds', withContext: 'ctx', builderId: 'builder', reviewerId: 'reviewer', maxRounds: 'max', escalate: 'escalate', seatId: 'seat', topic: 'topic', task: 'task', message: 'message', overrides: 'ov' };
 function openNew(kind, preset, source) {
   if (!KIND[kind]) kind = 'meeting';
   if (!S.order.length) { toast('Add an agent first'); return openAgent(null); }
@@ -864,19 +868,19 @@ function openNew(kind, preset, source) {
   const other = (id) => order.find((x) => x !== id) || S.order.find((x) => x !== id) || id;
   // Two participants: one per CLI when both work, else the first two usable seats, else any two.
   const pair = () => { const two = [...new Set([firstClaude, firstCodex].filter(Boolean))]; for (const x of [...order, ...S.order]) { if (two.length >= 2) break; if (!two.includes(x)) two.push(x); } return two; };
-  const stored = (k) => { try { return JSON.parse(ls.get('ob.new.' + k) || '{}') || {}; } catch { return {}; } };
+  const stored = (k) => { try { const x = JSON.parse(ls.get('ob.new.' + k) || '{}') || {}; delete x.ov; return x; } catch { return {}; } }; // overrides are per session, never remembered
   const P = {}; for (const [from, to] of Object.entries(PRESET_MAP)) if (preset && from in preset) P[to] = preset[from] ?? '';
   const defaults = {
-    meeting: { topic: '', participants: pair(), scout: firstCodex || '', facilitator: firstClaude || '', rounds: 2, ctx: false },
-    chain: { task: '', builder: firstClaude, reviewer: firstCodex !== firstClaude ? firstCodex : other(firstClaude), max: 2, escalate: false, ctx: false },
+    meeting: { topic: '', participants: pair(), scout: firstCodex || '', facilitator: firstClaude || '', rounds: 2, ctx: false, ov: {} },
+    chain: { task: '', builder: firstClaude, reviewer: firstCodex !== firstClaude ? firstCodex : other(firstClaude), max: 2, escalate: false, ctx: false, ov: {} },
     dm: { seat: firstClaude, message: '' },
   };
   // Team presets: fixed setups the user can pick in one click; the choice is remembered (localStorage, per browser).
   const presetValues = (id) => {
     // Quick keeps the scout: one brief read of the code instead of every participant reading it with tools.
-    if (id === 'quick') return { participants: pair(), scout: firstCodex || '', facilitator: '', rounds: 1, ctx: false };
-    if (id === 'full') return { participants: order.slice(), scout: firstCodex || '', facilitator: firstClaude || '', rounds: 2, ctx: false };
-    if (id === 'review') return { builder: firstClaude, reviewer: firstCodex !== firstClaude ? firstCodex : other(firstClaude), max: 2, escalate: true, ctx: false };
+    if (id === 'quick') return { participants: pair(), scout: firstCodex || '', facilitator: '', rounds: 1, ctx: false, ov: {} };
+    if (id === 'full') return { participants: order.slice(), scout: firstCodex || '', facilitator: firstClaude || '', rounds: 2, ctx: false, ov: {} };
+    if (id === 'review') return { builder: firstClaude, reviewer: firstCodex !== firstClaude ? firstCodex : other(firstClaude), max: 2, escalate: true, ctx: false, ov: {} };
     return {};
   };
   // ignore seats that no longer exist
@@ -925,12 +929,67 @@ function openNew(kind, preset, source) {
     if (k === 'meeting') Object.assign(x, { topic: q('#nTopic').value, scout: q('#nScout').value, facilitator: q('#nSynth').value, rounds: Number(q('#nRounds').value), ctx: q('#nCtx').checked });
     else if (k === 'chain') Object.assign(x, { task: q('#nTask').value, builder: q('#nBuilder').value, reviewer: q('#nReviewer').value, max: Number(q('#nMax').value), escalate: q('#nEsc').checked, ctx: q('#nCtx').checked });
     else Object.assign(x, { seat: q('#nSeat').value, message: q('#nMsg').value });
+    if (k !== 'dm') {
+      x.ov ||= {};
+      $$('select[data-ov]', box).forEach((sel) => {
+        const o = x.ov[sel.dataset.ov] || {};
+        if (sel.value) o[sel.dataset.f] = sel.value; else delete o[sel.dataset.f];
+        if (Object.keys(o).length) x.ov[sel.dataset.ov] = o; else delete x.ov[sel.dataset.ov];
+      });
+    }
+  };
+  // Seats that take part in the session (their overrides are shown and sent).
+  const rolesOf = (k, x) => {
+    const ids = k === 'meeting' ? [...x.participants, x.scout, x.facilitator] : k === 'chain' ? [x.builder, x.reviewer] : [];
+    return S.order.filter((id) => ids.includes(id));
+  };
+  // Optional per-session model and effort (empty = the seat's own). A Claude scout's brief runs on Haiku unless its
+  // model is set here: the server applies that default to the scout's brief only, never to the seat's other turns.
+  const isHaiku = (m) => /haiku/i.test(String(m || ''));
+  const scoutModel = (x, id) => (id === x.scout && S.seats[id]?.agent === 'claude' && !x.ov?.[id]?.model ? CHEAP_MODEL : '');
+  // The model a seat's turns run on in this session (the scout default is shown for its row).
+  const effectiveModel = (x, id) => (x.ov || {})[id]?.model || scoutModel(x, id) || S.seats[id]?.model || '';
+  const ovHtml = (k, x, roles) => `<details class="ov-box"${roles.some((id) => Object.keys((x.ov || {})[id] || {}).length) ? ' open' : ''}><summary>Model and effort for this session (optional)</summary>
+      <div class="hint" style="margin:6px 0 0">Applies to this session only and is not remembered; the seats keep their own settings.</div>
+      ${roles.map((id) => {
+        const s = S.seats[id], o = (x.ov || {})[id] || {}, sm = scoutModel(x, id);
+        const models = [...new Set([...(S.models[s.agent] || []), o.model].filter(Boolean))];
+        const efforts = S.efforts[s.agent] || [];
+        const modelOpts = [
+          `<option value="">${esc(sm ? `${sm} (scout default)` : `Seat default: ${s.model}`)}</option>`,
+          ...(sm ? [`<option value="${esc(s.model)}" ${o.model === s.model ? 'selected' : ''}>Seat default: ${esc(s.model)}</option>`] : []),
+          ...models.filter((m) => !(sm && m === s.model)).map((m) => `<option value="${esc(m)}" ${o.model === m ? 'selected' : ''}>${esc(m)}</option>`),
+        ].join('');
+        return `<div class="ov-row"><span class="ov-name">${esc(s.name)}</span>
+          <select class="input" data-ov="${esc(id)}" data-f="model" aria-label="Model for ${esc(s.name)}">${modelOpts}</select>
+          <select class="input" data-ov="${esc(id)}" data-f="effort" aria-label="Effort for ${esc(s.name)}"><option value="">Seat default: ${esc(s.effort)}</option>${efforts.map((e) => `<option value="${esc(e)}" ${o.effort === e ? 'selected' : ''}>${esc(e)}</option>`).join('')}</select></div>`;
+      }).join('')}
+    </details>`;
+  // Rebuilt only when the session's seats or the scout change, so an open select keeps its place while the user edits it.
+  const renderOv = () => {
+    const k = cur(), x = v[k], el = q('#nOv'); if (!el) return;
+    const roles = rolesOf(k, x), key = k + ':' + x.scout + ':' + roles.join(',');
+    if (el.dataset.key !== key) { el.dataset.key = key; el.innerHTML = roles.length ? ovHtml(k, x, roles) : ''; }
+    // Haiku takes no effort setting, so the effort select is off for a turn that runs on Haiku.
+    $$('select[data-f="effort"]', el).forEach((sel) => { const no = isHaiku(effectiveModel(x, sel.dataset.ov)); sel.disabled = no; sel.title = no ? 'Haiku takes no effort setting' : ''; });
+  };
+  // Overrides as the API takes them: only seats in the session, only values that differ from the seat.
+  const ovPayload = (k, x) => {
+    const out = {};
+    for (const id of rolesOf(k, x)) {
+      const o = (x.ov || {})[id] || {}, e = {};
+      if (o.model) e.model = o.model;
+      if (o.effort && !isHaiku(effectiveModel(x, id))) e.effort = o.effort;
+      if (Object.keys(e).length) out[id] = e;
+    }
+    return out;
   };
   const update = () => {
     read(); const k = cur(), x = v[k];
     const n = k === 'meeting' ? (x.scout ? 1 : 0) + x.participants.length * x.rounds + (x.facilitator ? 1 : 0) : k === 'chain' ? 2 * x.max : 1;
     q('#nCost').textContent = `Up to ${n} agent run${n === 1 ? '' : 's'} · uses your Claude Code / Codex quota`;
     if (k === 'dm') { const s = S.seats[x.seat]; q('#nDmHint').textContent = s ? `Continues your existing chat with ${s.name} (memory: ${s.thread ? 'active' : 'empty'})` : ''; }
+    renderOv();
   };
   // Any setup change (not the text) turns the selection into "Custom".
   const customise = () => { if (presetId !== 'custom') { presetId = 'custom'; chips(); } };
@@ -942,14 +1001,14 @@ function openNew(kind, preset, source) {
       <div class="grid3"><div><label class="label" for="nScout">Scout</label><select class="input" id="nScout" aria-describedby="nScoutH">${opt(x.scout, true)}</select><div class="hint" id="nScoutH">Reads the code once so others don't have to (saves tokens)</div></div>
         <div><label class="label" for="nSynth">Facilitator</label><select class="input" id="nSynth" aria-describedby="nSynthH">${opt(x.facilitator, true)}</select><div class="hint" id="nSynthH">Summarizes at the end; saved to .orchestra/BRAINSTORM.md</div></div>
         <div><label class="label" for="nRounds">Rounds</label><select class="input" id="nRounds" aria-describedby="nRoundsH">${nums([1, 2, 3, 4], x.rounds)}</select><div class="hint" id="nRoundsH">Stops early on consensus</div></div></div>
-      ${ctxBox(x.ctx)}`;
+      <div id="nOv"></div>${ctxBox(x.ctx)}`;
     else if (k === 'chain') f.innerHTML = `
       <label class="label" for="nTask">Task</label><textarea class="input" id="nTask" placeholder="What should be proposed and reviewed?">${esc(x.task)}</textarea>
       <div class="grid3"><div><label class="label" for="nBuilder">Proposer</label><select class="input" id="nBuilder">${opt(x.builder)}</select></div>
         <div><label class="label" for="nReviewer">Reviewer</label><select class="input" id="nReviewer">${opt(x.reviewer)}</select></div>
         <div><label class="label" for="nMax">Max rounds</label><select class="input" id="nMax">${nums([1, 2, 3], x.max)}</select></div></div>
       <label class="check-l"><input type="checkbox" id="nEsc" ${x.escalate ? 'checked' : ''}> Raise proposer effort after a FAIL</label>
-      ${ctxBox(x.ctx, 'margin-top:6px')}`;
+      <div id="nOv"></div>${ctxBox(x.ctx, 'margin-top:6px')}`;
     else f.innerHTML = `<label class="label" for="nSeat">Agent</label><select class="input" id="nSeat">${opt(x.seat)}</select>
       <label class="label" for="nMsg">Message</label><textarea class="input" id="nMsg" placeholder="Ask something…" aria-describedby="nDmHint">${esc(x.message)}</textarea><div class="hint" id="nDmHint"></div>`;
     $$('.pick', f).forEach((p) => p.onclick = () => { const id = p.dataset.id, l = v.meeting.participants; v.meeting.participants = l.includes(id) ? l.filter((y) => y !== id) : [...l, id]; const on = v.meeting.participants.includes(id); p.classList.toggle('on', on); p.setAttribute('aria-pressed', String(on)); customise(); update(); });
@@ -969,10 +1028,10 @@ function openNew(kind, preset, source) {
     if (k === 'chain' && !x.task.trim()) { toast('Write a task first'); return q('#nTask')?.focus(); }
     go.disabled = true; go.textContent = 'Starting…';
     try {
-      if (k === 'meeting') r = await api('/api/meeting', { topic: x.topic, seatIds: S.order.filter((id) => x.participants.includes(id)), scoutId: x.scout, synthId: x.facilitator, rounds: x.rounds, withContext: x.ctx });
-      else if (k === 'chain') r = await api('/api/chain', { task: x.task, builderId: x.builder, reviewerId: x.reviewer, maxRounds: x.max, escalate: x.escalate, withContext: x.ctx });
+      if (k === 'meeting') r = await api('/api/meeting', { topic: x.topic, seatIds: S.order.filter((id) => x.participants.includes(id)), scoutId: x.scout, synthId: x.facilitator, rounds: x.rounds, withContext: x.ctx, overrides: ovPayload(k, x) });
+      else if (k === 'chain') r = await api('/api/chain', { task: x.task, builderId: x.builder, reviewerId: x.reviewer, maxRounds: x.max, escalate: x.escalate, withContext: x.ctx, overrides: ovPayload(k, x) });
       else r = await api(`/api/seats/${x.seat}/send`, { text: x.message.trim() });
-      const { topic, task, message, ...keep } = x; // remember the setup, never the text
+      const { topic, task, message, ov, ...keep } = x; // remember the setup, never the text or this session's overrides
       ls.set('ob.new.kind', k); ls.set('ob.new.' + k, JSON.stringify(keep)); ls.set('ob.new.preset', presetId);
       closeOverlay(); openRoom(r.roomId);
     } catch {} finally { go.disabled = false; go.textContent = 'Start'; }
@@ -1034,6 +1093,7 @@ function openSettings() {
     <div class="modal-b">
       <label class="label" for="sLang">Agents reply in</label><input class="input" id="sLang" value="${esc(S.settings.lang || 'English')}" placeholder="English" aria-describedby="sLangH">
       <div class="hint" id="sLangH">Applies to new conversations (existing memories keep their language). Saved when you leave the field.</div>
+      <label class="check-l"><input type="checkbox" id="sCap" ${S.settings.capEffort === false ? '' : 'checked'}> Cap effort in discussion rounds (Debate: medium at most, saves tokens)</label>
       <div class="label" id="sThemeL">Theme</div>${seg('sTheme', ['system', 'light', 'dark'].map((t) => [t, cap(t)]), ls.get('ob.theme') || 'system', 'Theme', 'data-t')}
       <label class="check-l"><input type="checkbox" id="sNotify" ${notify ? 'checked' : ''}> Desktop notification when a session finishes or needs you</label>
       <div class="label">Setup</div>
@@ -1050,6 +1110,10 @@ function openSettings() {
       if (await Notification.requestPermission() !== 'granted') { want = false; cb.checked = false; toast('Notifications are blocked by the browser'); }
     }
     ls.set('ob.notify', want ? '1' : '0');
+  };
+  const capBox = box.querySelector('#sCap');
+  capBox.onchange = async () => {
+    try { await api('/api/settings', { capEffort: capBox.checked }); S.settings.capEffort = capBox.checked; toast(capBox.checked ? 'Discussion effort capped at medium' : 'Discussion rounds use each seat’s effort'); } catch { capBox.checked = S.settings.capEffort !== false; }
   };
   const lang = box.querySelector('#sLang'); let savedLang = S.settings.lang || 'English';
   const saveLang = async () => {

@@ -122,6 +122,6 @@ test('`orchestra-board doctor --json` prints a JSON report with a checks array a
 test('`orchestra-board --help` prints usage and exits 0', () => {
   const r = spawnSync(process.execPath, ['bin/orchestra-board.js', '--help'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0);
-  assert.match(r.stdout, /Usage: orchestra-board \[projectDir\] \[--port <n>\] \[--open\]/);
+  assert.match(r.stdout, /Usage: agent-orchestra-board \[projectDir\] \[--port <n>\] \[--open\]/);
   assert.match(r.stdout, /orchestra-board doctor/);
 });

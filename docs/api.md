@@ -29,7 +29,7 @@ Content types: html, css, js, svg, png, ico, json.
 | Route | Returns |
 | --- | --- |
 | `GET /api/events` | SSE stream; first event `{"t":"hello"}`, heartbeat comment `: hb` every 15 s |
-| `GET /api/state` | `{project, models, efforts, seats: publicSeat[], rooms (<= 25, newest first, with messages), limits, settings}`. A `naive: boolean` field (true when started with `ORCHESTRA_NAIVE=1`) is required by `bench/token-bench.mjs`; it is documented here as the contract and only present once `src/server.js` `state()` returns it. |
+| `GET /api/state` | `{project, models, efforts, seats: publicSeat[], rooms (<= 25, newest first, with messages), limits, settings}`. The `naive: boolean` field (true when started with `ORCHESTRA_NAIVE=1`) is required by `bench/token-bench.mjs`. |
 | `GET /api/doctor` | `{ok, checks: [{id, name, status, detail, hint?}]}`; `ok` is false when any check has `status: "fail"`. Checks: `node`, `claude`, `codex` (CLI found and `--version` runs; a `.cmd` shim is `warn`, a missing CLI is `fail`), `claudeLogin`, `codexLogin`, `codexSandbox`, `pwsh`, `port`, `project`, `orchestra`. Over HTTP no port is passed, so `port` is always `skip` here (the `doctor` CLI tests it). Spawns only `<cli> --version`, never a model call. |
 
 ## Seats
@@ -48,20 +48,22 @@ Content types: html, css, js, svg, png, ico, json.
 
 | Route | Body | Returns |
 | --- | --- | --- |
-| `POST /api/meeting` | `{topic (<= 4000), seatIds (2-20 ids), rounds 1-5 (default 2), synthId?, scoutId?, withContext?: boolean}` | `{roomId}` |
-| `POST /api/chain` | `{task (<= 8000), builderId, reviewerId (different), maxRounds 1-6 (default 3), escalate?: boolean, withContext?: boolean}` | `{roomId}` |
+| `POST /api/meeting` | `{topic (<= 4000), seatIds (2-20 ids), rounds 1-5 (default 2), synthId?, scoutId?, withContext?: boolean, overrides?}` | `{roomId}` |
+| `POST /api/chain` | `{task (<= 8000), builderId, reviewerId (different), maxRounds 1-6 (default 3), escalate?: boolean, withContext?: boolean, overrides?}` | `{roomId}` |
 | `POST /api/rooms/:id/stop` | | `{ok}` |
 | `POST /api/rooms/:id/say` | `{text}` | `{ok}`; only for a running meeting/chain (`400` for dm or finished rooms). The next speaker reads it. |
 | `POST /api/rooms/:id/delete` | | `{ok}` |
 
 Room statuses: meeting `running | done | stopped | error`; chain `running | passed | needs-you | stopped | error`; dm `running | idle`.
 
+`overrides` (optional, New session modal) is `{seatId: {model?, effort?}}`, stored on the room. Each key must be a real agent id (`400 no such agent`). Each value must be an object (`400 each override must be an object`), and the whole field must be an object keyed by agent id (`400 overrides must be an object keyed by agent id`). `model` is a CLI model name of up to 64 characters from `[A-Za-z0-9._:\-\[\]]` (`400 invalid model name`). `effort` must be one the agent's CLI supports (`400 effort "..." is not supported by <agent>`). Empty values mean the seat's own setting and are dropped. An override applies to every turn that seat takes in that room and never changes the seat. A Claude scout's brief runs on `claude-haiku-5-5` unless the scout has a `model` override, and the scout's other turns keep their own model. Haiku models get no `--effort` flag.
+
 ## Limits and settings
 
 | Route | Body | Returns |
 | --- | --- | --- |
 | `POST /api/limits/refresh` | | `{ok: true}`; re-reads the Codex rollout and spawns one Claude Haiku probe |
-| `POST /api/settings` | `{lang}` | settings (`lang` must match `^[\p{L} ()-]{2,30}$`) |
+| `POST /api/settings` | `{lang?, capEffort?: boolean}` | settings (`lang` must match `^[\p{L} ()-]{2,30}$`; `capEffort` absent or `true` caps Debate discussion rounds at `medium`, `false` keeps each seat's own effort) |
 
 ## SSE events
 
@@ -73,8 +75,8 @@ Each `data:` line is a JSON object with a `t` field:
 | `seat` | `{seat: publicSeat}` |
 | `seatGone` | `{id}` |
 | `run` | `{seatId, runId, roomId}` a turn started |
-| `delta` | `{seatId, runId, text}` streamed answer text |
-| `item` | `{seatId, runId, roomId, kind: 'tool'|'reasoning'|'error', text (<= 200 chars), ts}` |
+| `delta` | `{seatId, runId, text, reset?: true}` streamed answer text; `reset: true` (with empty text) means a retry started, so the client drops the text streamed so far |
+| `item` | `{seatId, runId, roomId, kind: 'tool'|'reasoning'|'error'|'retry'|'system', text (<= 200 chars), ts}` |
 | `end` | `{seatId, runId, roomId, ok, tokens, cached, cost, error|null}` |
 | `room` | `{room}` room meta without messages |
 | `roomGone` | `{id}` |
@@ -96,6 +98,6 @@ Each `data:` line is a JSON object with a `t` field:
 | `PORT` | default port (overridden by `--port` or the legacy positional port); 4317 otherwise |
 | `ORCHESTRA_CLAUDE_BIN`, `ORCHESTRA_CODEX_BIN` | CLI executables, read at spawn time (`claude` / `codex` by default) |
 | `ORCHESTRA_LANG` | default `settings.lang` (`English`) |
-| `ORCHESTRA_NAIVE` | `1` turns the token levers off (no lean CLI flags, no scout, full transcripts, fresh threads, no early stop or effort cap). **Benchmark baseline only**, read at start; see [bench/README.md](../bench/README.md) |
+| `ORCHESTRA_NAIVE` | `1` turns the token levers off (drops the token-trimming CLI flags; the isolation flags stay; no scout, full transcripts, fresh threads, no early stop or effort cap). **Benchmark baseline only**, read at start; see [bench/README.md](../bench/README.md) |
 | `ORCHESTRA_RETRY_DELAYS_MS` | comma-separated delays in ms before each automatic retry of a transiently failed turn (`src/config.js` has the default) |
-| `ORCHESTRA_IDLE_MINUTES` | minutes of CLI silence before a turn is treated as a transient failure (`settings.idleMinutes` wins; default 5) |
+| `ORCHESTRA_IDLE_MINUTES` | minutes of CLI silence before a turn is treated as a transient failure (`settings.idleMinutes` wins; default 5, or 10 for Codex seats; `0` or `off` disables the watchdog) |

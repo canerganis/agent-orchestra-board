@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// CLI entry. Usage: orchestra-board [projectDir] [--port <n>] [--open]   |   orchestra-board doctor [projectDir] [--json]
-// Legacy form still works: node server.js [projectDir] [port]
+// CLI entry. Usage: agent-orchestra-board [projectDir] [--port <n>] [--open]   |   agent-orchestra-board doctor [projectDir] [--json]
+// Legacy form still works: agent-orchestra-board [projectDir] [port]
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -8,11 +8,11 @@ const { spawnResolved } = require('../src/platform'); // every child process of 
 const { DEFAULT_PORT } = require('../src/config');
 const { version: VERSION } = require('../package.json');
 
-const USAGE = `Orchestra Board ${VERSION} - a local board that runs Claude CLI and Codex CLI agents as seats.
+const USAGE = `Agent Orchestra Board ${VERSION} - a local board that runs Claude CLI and Codex CLI agents as seats.
 
-Usage: orchestra-board [projectDir] [--port <n>] [--open]
-       orchestra-board doctor [projectDir] [--port <n>] [--json]
-       orchestra-board --version | --help
+Usage: agent-orchestra-board [projectDir] [--port <n>] [--open]
+       agent-orchestra-board doctor [projectDir] [--port <n>] [--json]
+       agent-orchestra-board --version | --help
 
   projectDir     project to orchestrate (default: current directory); state lives in <projectDir>/.orchestra/
   --port <n>     listen port (default: $PORT or ${DEFAULT_PORT}); the board binds 127.0.0.1 only
@@ -22,7 +22,7 @@ Usage: orchestra-board [projectDir] [--port <n>] [--open]
   -V, --version  print the version
   -h, --help     show this help
 
-Legacy form: node server.js [projectDir] [port]
+Legacy form: agent-orchestra-board [projectDir] [port]
 
 Environment: ORCHESTRA_CLAUDE_BIN, ORCHESTRA_CODEX_BIN (CLI executables), ORCHESTRA_LANG (agents' reply language), PORT`;
 
@@ -74,7 +74,7 @@ function banner(info, projectDir) {
   const bold = (s) => (useColor ? `\x1b[1m${s}\x1b[0m` : s);
   return [
     '',
-    `  ${bold(`Orchestra Board ${VERSION}`)}`,
+    `  ${bold(`Agent Orchestra Board ${VERSION}`)}`,
     `  Board    ${bold(info.url)}  ${dim('(127.0.0.1 only)')}`,
     `  Project  ${projectDir}`,
     `  State    ${path.join(projectDir, '.orchestra')}`,
@@ -104,27 +104,27 @@ function installShutdown(app) {
 async function main(argv = process.argv.slice(2)) {
   const a = parseArgs(argv);
   if (a.help) { console.log(USAGE); return; }
-  if (a.version) { console.log(`orchestra-board ${VERSION}`); return; }
+  if (a.version) { console.log(`agent-orchestra-board ${VERSION}`); return; }
   const projectDir = path.resolve(a.projectDir || process.cwd());
   const port = resolvePort(a);
   if (a.cmd === 'doctor') {
     const doctor = require('../src/doctor');
     const result = await doctor.run({ projectDir, port });
     if (a.json) console.log(JSON.stringify(result, null, 2));
-    else console.log(`\n  Orchestra Board ${VERSION} doctor  (${process.platform} ${os.arch()}, node ${process.versions.node})\n\n${doctor.format(result, { color: process.stdout.isTTY && !process.env.NO_COLOR })}\n`);
+    else console.log(`\n  Agent Orchestra Board ${VERSION} doctor  (${process.platform} ${os.arch()}, node ${process.versions.node})\n\n${doctor.format(result, { color: process.stdout.isTTY && !process.env.NO_COLOR })}\n`);
     process.exitCode = result.ok ? 0 : 1;
     return;
   }
   // `start` must never create a mistyped project path: createServer() runs `mkdir -p` for .orchestra/ and would
   // silently serve an empty project (doctor has its own projectCheck and reports instead of exiting).
-  let st; try { st = fs.statSync(projectDir); } catch { throw Object.assign(new Error(`project directory does not exist: ${projectDir}\n  Pass an existing directory (orchestra-board <projectDir>), or run from inside your project.`), { exitCode: 2 }); }
+  let st; try { st = fs.statSync(projectDir); } catch { throw Object.assign(new Error(`project directory does not exist: ${projectDir}\n  Pass an existing directory (agent-orchestra-board <projectDir>), or run from inside your project.`), { exitCode: 2 }); }
   if (!st.isDirectory()) throw Object.assign(new Error(`not a directory: ${projectDir}`), { exitCode: 2 });
   const { createServer } = require('../src/server');
   const app = createServer({ projectDir, port });
   let info;
   try { info = await app.start(); } catch (e) {
     if (e && e.code === 'EADDRINUSE') {
-      throw Object.assign(new Error(`port ${port} is already in use. Is another Orchestra Board running at http://localhost:${port}? Otherwise pass --port <other>.`), { exitCode: 1 });
+      throw Object.assign(new Error(`port ${port} is already in use. Is another Agent Orchestra Board running at http://localhost:${port}? Otherwise pass --port <other>.`), { exitCode: 1 });
     }
     if (e && e.code === 'EACCES') throw Object.assign(new Error(`no permission to listen on port ${port}; pass --port <other> (1024-65535).`), { exitCode: 1 });
     throw e;
@@ -138,6 +138,6 @@ async function main(argv = process.argv.slice(2)) {
   return app;
 }
 
-if (require.main === module) main().catch((e) => { console.error(`orchestra-board: ${e.message || e}`); process.exit(e.exitCode || 1); });
+if (require.main === module) main().catch((e) => { console.error(`agent-orchestra-board: ${e.message || e}`); process.exit(e.exitCode || 1); });
 
 module.exports = { main, parseArgs, openBrowser };

@@ -328,7 +328,7 @@ function report({ args, boards, seats, runs, states, startedAt }) {
   out.push('- `Uncached tokens` = the board\'s `tokens` figure: Claude input + cache creation + output; Codex (input - cached) + output. `Cached tokens` = cached input (cache reads), reported separately by both CLIs. `Total tokens` = uncached + cached, i.e. every input token the CLI reported plus output; this is the figure comparable with the 1.69M -> 0.46M before/after observation, whose "before" board recorded one undivided count per turn.');
   out.push('- `Cost` is only what the CLIs report: Claude Code reports `total_cost_usd`; Codex CLI reports no cost, so Codex seats contribute $0 and the cost column understates mixed meetings.');
   out.push('- `Wall time` is measured by this script from the `POST /api/meeting` response to the first terminal room status; it includes CLI start-up and queueing.');
-  out.push('- The naive arm is an approximation of a board without the token-lean levers (no scout, tools and target in every turn, full transcript and fresh CLI thread per turn, fixed rounds, no effort cap, lean CLI flags off); see README.md for the exact contract.');
+  out.push('- The naive arm is an approximation of a board without the token-lean levers (no scout, tools and target in every turn, full transcript and fresh CLI thread per turn, fixed rounds, no effort cap, token-trimming CLI flags off, isolation flags on in both arms); see README.md for the exact contract.');
   out.push('- Agent answers are non-deterministic: repeat with `--repeat 3` or more before quoting a percentage, and quote the mean with the spread.');
   out.push(`- Raw rooms, states and metrics: token-bench.json next to this report.`);
   return out.join('\n') + '\n';

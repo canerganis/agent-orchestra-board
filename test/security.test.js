@@ -55,7 +55,7 @@ test('with the cookie: / is the app, /api/state has the documented shape, /api/d
   assert.equal(home.status, 200); assert.match(home.headers['content-type'], /text\/html/); assert.match(home.text, /<!doctype html>/i);
   const st = await ctx.get('/api/state');
   assert.equal(st.status, 200);
-  assert.deepEqual(Object.keys(st.json).sort(), ['efforts', 'limits', 'models', 'project', 'rooms', 'seats', 'settings']);
+  assert.deepEqual(Object.keys(st.json).sort(), ['efforts', 'limits', 'models', 'naive', 'project', 'rooms', 'seats', 'settings']);
   assert.equal(st.json.settings.lang, 'English');
   assert.ok(Array.isArray(st.json.seats) && st.json.seats.length >= 1);
   for (const s of st.json.seats) assert.ok(['idle', 'working', 'error'].includes(s.status) && 'activity' in s && 'roomId' in s);

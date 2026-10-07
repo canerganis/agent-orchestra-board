@@ -111,10 +111,14 @@ async function startApp({ port: preferred, projectDir }) {
   let ownHome = null;
   if (!process.env.OB_TEST_HOME || !fs.existsSync(process.env.OB_TEST_HOME)) { ownHome = tmpDir('ob-home-'); isolateHome(ownHome); }
   let app = null, info = null, port = null, lastErr = null;
-  for (const p of candidates(preferred, APP_PORTS)) {
-    const candidate = createServer({ projectDir, port: p });
-    try { info = await candidate.start(); app = candidate; port = p; break; }
-    catch (e) { lastErr = e; try { await candidate.close(); } catch {} if (e && e.code !== 'EADDRINUSE') throw e; }
+  // Suites run in parallel and each holds its port for its whole life: when all five app ports are busy, wait for one.
+  for (let attempt = 0; attempt < 60 && !app; attempt++) {
+    for (const p of candidates(preferred, APP_PORTS)) {
+      const candidate = createServer({ projectDir, port: p });
+      try { info = await candidate.start(); app = candidate; port = p; break; }
+      catch (e) { lastErr = e; try { await candidate.close(); } catch {} if (e && e.code !== 'EADDRINUSE') throw e; }
+    }
+    if (!app) await sleep(250);
   }
   if (!app) { if (ownHome) rmrf(ownHome); throw lastErr || new Error('no free test port in 4390-4394'); }
   app.__testHome = ownHome;

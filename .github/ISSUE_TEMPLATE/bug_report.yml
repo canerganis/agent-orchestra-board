@@ -58,7 +58,7 @@ body:
     id: logs
     attributes:
       label: Logs and room items
-      description: Server console output, the failing room's items panel (tool / reasoning / error), or `node bin/agent-orchestra-board.js doctor` output. Redact paths and private text.
+      description: Server console output, the failing room's tool-call lines and the error on the failed message, or `node bin/agent-orchestra-board.js doctor` output. Redact paths and private text.
       render: text
   - type: checkboxes
     id: checks

@@ -57,7 +57,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
   // room: meetings/chains keep one thread per seat per room, so old conversations are never re-sent.
   // recovery(): text that re-establishes the context on a fresh thread (role header is added here); onRecover(note):
   // called once when a lost thread was replaced (rooms.js records it as a system line).
-  async function execSeat(seatId, prompt, { effort, runId = newId(), roomId = null, room = null, tools = null, withTarget = true, threadKey = null, cancelled = null, recovery = null, onRecover = null } = {}) {
+  async function execSeat(seatId, prompt, { effort, model = null, runId = newId(), roomId = null, room = null, tools = null, withTarget = true, threadKey = null, cancelled = null, recovery = null, onRecover = null } = {}) {
     roomId ??= room?.id ?? null; // run/item/end events carry the room even when the caller passed only `room`
     const seat = seatById(seatId);
     if (!seat) return { ok: false, error: 'no such agent', text: '' };
@@ -65,6 +65,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
     if (isStopped()) return { ok: false, error: 'stopped', text: '' }; // queued before the stop
     if (seat.budget && seat.used >= seat.budget) return { ok: false, error: `${seat.name} reached its token budget`, text: '' };
     const eff = effort || seat.effort;
+    const mdl = model || seat.model; // per-session model override (room.overrides), else the seat model
     const mode = tools === 'write' && seat.perm !== 'write' ? 'read' : tools || (seat.perm === 'write' ? 'write' : 'read');
     const threads = room ? (room.threads ||= {}) : null;
     const key = threadKey || seat.id;
@@ -92,7 +93,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
     };
     let out;
     for (;;) {
-      out = await attempt({ seat, seatId, agent, prompt: turnPrompt, eff, mode, thread, recoveryText, withTarget, runId, roomId, first });
+      out = await attempt({ seat, seatId, agent, prompt: turnPrompt, eff, mdl, mode, thread, recoveryText, withTarget, runId, roomId, first });
       first = false;
       total.tokens += out.tokens; total.cached += out.cached; total.cost += out.cost;
       if (out.notStarted) return { ok: false, error: out.error, text: '' }; // spawn() threw before anything ran
@@ -164,7 +165,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
   }
 
   // One CLI process. Resolves with the raw outcome; the retry/recovery policy lives in execSeat.
-  function attempt({ seat, seatId, agent, prompt, eff, mode, thread, recoveryText, withTarget, runId, roomId, first }) {
+  function attempt({ seat, seatId, agent, prompt, eff, mdl, mode, thread, recoveryText, withTarget, runId, roomId, first }) {
     return new Promise((resolve) => {
       const tgt = withTarget ? resolveTarget(seat, PROJECT) : { cwd: PROJECT, preface: '' };
       // Role header and target scope go out once per thread; a resumed thread already has them.
@@ -180,11 +181,11 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
         cmd = codexBin();
         // Codex always has a shell tool; in a no-tools turn an empty cwd keeps it from re-reading the project.
         if (mode === 'none') { cwd = path.join(store.orch, 'empty'); fs.mkdirSync(cwd, { recursive: true }); }
-        args = codexAdapter.buildArgs({ model: seat.model, effort: eff, mode, thread });
+        args = codexAdapter.buildArgs({ model: mdl, effort: eff, mode, thread });
       } else {
         cmd = claudeBin(); cwd = PROJECT; // Claude sessions are stored per project dir, so resume needs a stable cwd
         if (!thread) pendingThread = crypto.randomUUID();
-        args = claudeAdapter.buildArgs({ model: seat.model, effort: eff, thread, sessionId: pendingThread, addDir: tgt.dir && !tgt.dir.startsWith(PROJECT) ? tgt.dir : null, mode });
+        args = claudeAdapter.buildArgs({ model: mdl, effort: eff, thread, sessionId: pendingThread, addDir: tgt.dir && !tgt.dir.startsWith(PROJECT) ? tgt.dir : null, mode });
       }
 
       let text = '', final = null, usage = null, partial = null, err = null, gotThread = null, stderr = '', completed = false;
@@ -215,9 +216,11 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
       if (first) broadcast({ t: 'run', seatId, runId, roomId });
 
       // Idle watchdog: no stdout for idleMs -> kill the process tree; the turn then counts as a transient failure.
-      const limit = idleMs ?? idleTimeoutMs(eff, settings);
+      // limit 0 = watchdog off (settings/env 'off' or 0): no timer at all.
+      const limit = idleMs ?? idleTimeoutMs(eff, settings, agent);
       let idle = false, watchdog = null;
       const arm = () => {
+        if (!limit) return;
         if (watchdog) clearTimeout(watchdog);
         watchdog = setTimeout(() => { idle = true; try { killTree(child); } catch {} }, limit);
         if (typeof watchdog.unref === 'function') watchdog.unref();
@@ -226,7 +229,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
 
       let spawnErr = null, closed = false;
       child.stdout?.on('data', (d) => { if (!closed) arm(); parser.feed(d); });
-      child.stderr?.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
+      child.stderr?.on('data', (d) => { if (!closed) arm(); stderr = (stderr + d).slice(-4000); });
       // A missing/unlaunchable binary: Node emits 'error' (ENOENT, EACCES, EINVAL) and then 'close'.
       child.on('error', (e) => { spawnErr = spawnErrorMessage(agent, cmd, e, env); if (!closed) setTimeout(() => finish(null, null), 1000).unref?.(); });
       child.on('close', finish);
@@ -250,7 +253,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
         // (schema change, wrong binary, plain-text output), and a finished turn still counts even if the CLI exits
         // non-zero afterwards (e.g. a failing notify hook).
         const ok = !err && !spawnErr && completed;
-        const base = { ok, text: final ?? text, tokens, cached, cost, gotThread, pendingThread: ok && !gotThread ? pendingThread : null, stderr, stopped, idle: idle && !completed, spawnErr };
+        const base = { ok, completed, text: final ?? text, tokens, cached, cost, gotThread, pendingThread: ok && !gotThread ? pendingThread : null, stderr, stopped, idle: idle && !completed, spawnErr };
         if (ok) return resolve({ ...base, error: null });
         if (spawnErr || err || stopped) return resolve({ ...base, error: spawnErr || err || 'stopped' });
         if (idle) return resolve({ ...base, error: `${agent === 'codex' ? 'Codex' : 'Claude'} CLI produced no output for ${Math.round(limit / 6000) / 10} min (idle watchdog); the process was killed` });

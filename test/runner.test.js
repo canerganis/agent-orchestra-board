@@ -191,7 +191,7 @@ testWithFake(fake, 'probeClaude: Haiku no-tools probe runs the configured claude
   assert.deepEqual(limits.get().claude.windows.seven_day, { pct: 11.5, resetsAt: 1760300000000 });
   const probe = await waitFor(() => fake.calls().slice(before).find((c) => c.args.includes('--no-session-persistence')), { what: 'probe call' });
   assert.equal(probe.agent, 'claude'); assert.equal(probe.seat, null);
-  assert.equal(probe.args[probe.args.indexOf('--model') + 1], 'claude-haiku-4-5-20251001');
+  assert.equal(probe.args[probe.args.indexOf('--model') + 1], 'claude-haiku-5-5');
   assert.deepEqual(probe.args.slice(-2), ['--tools', '']);
   assert.equal(probe.stdin, 'Reply with: ok');
   assert.ok(samePath(probe.cwd, os.tmpdir()), `probe cwd ${probe.cwd} is the temp dir`);

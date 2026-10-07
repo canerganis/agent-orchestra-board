@@ -61,7 +61,7 @@ testWithFake(fake, 'full debate: scout brief -> parallel round 1 without tools -
   const scout = calls.find((c) => c.seat === 'Scout');
   assert.ok(scout.stdin.includes(`Scout task for a meeting. Topic:\n${TOPIC}`));
   assert.deepEqual(scout.tools, ['Read', 'Grep', 'Glob'], 'the scout is the only step with tools');
-  assert.equal(scout.effort, 'low'); assert.equal(scout.resume, false);
+  assert.equal(scout.model, 'claude-haiku-5-5', 'a Claude scout brief runs on the cheap default'); assert.equal(scout.effort, null, 'Haiku takes no --effort'); assert.equal(scout.resume, false);
   const r1 = calls.filter((c) => /Round 1 of 4/.test(c.stdin));
   const r1a = r1.find((c) => c.seat === 'Ada'), r1b = r1.find((c) => c.seat === 'Bob');
   for (const c of [r1a, r1b]) {
