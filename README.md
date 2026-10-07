@@ -8,6 +8,11 @@
 
 Zero dependencies, runs on your own CLI logins (no API keys), read-only seats in v0.1.
 
+<p align="center">
+  <img src="docs/screenshot-light.png" alt="A finished Debate in Agent Orchestra Board: four Claude Code and Codex agents discussed whether to ship a Windows installer; the round verdict shows 3 of 4 agreed, the synthesis lists options, and the right panel shows the live workflow timeline with per-agent tokens and time." width="100%">
+</p>
+<p align="center"><sub>A finished Debate: scout brief, two rounds, a round verdict from the agents' stance lines, the synthesis, and the live workflow timeline with tokens per turn.</sub></p>
+
 ## What you get
 
 - **Two vendors at one table.** A seat is either `claude -p` or `codex exec`. Put an Opus-class architect, a GPT-class reviewer and a devil's advocate into the same room.
@@ -109,7 +114,7 @@ Windows 11 is the primary development platform.
 
 **Does it need an API key?** No. It shells out to the `claude` and `codex` CLIs you are already logged into.
 
-**Which models?** The ones your CLIs offer. Type any name or alias your CLI accepts; effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex). Claude Haiku 5.5 (`claude-haiku-5-5`) is the default for the usage probe and for a Claude scout. It has **not been verified against the real CLI yet**: the tests use a fake CLI. The CLI may print an `unrecognized_model` warning for it. The usage probe retries on `claude-haiku-4-5-20251001` if the id is rejected, but the scout has no such fallback: if the CLI rejects the id, the scout turn fails, the meeting continues without a brief, and every seat reads the code itself (the expensive path). If that happens, set the scout's model in *New session* to a model your CLI accepts.
+**Which models?** The ones your CLIs offer. Type any name or alias your CLI accepts; effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex). Claude Haiku 5.5 (`claude-haiku-5-5`) is the default for the usage probe and for a Claude scout. It was checked against the real CLI on 2026-10-08 (Claude Code 2.1.291): a Haiku 5.5 seat and a Codex seat held a two-round debate, kept their threads across a server restart and passed a Propose → Review. Older CLI versions may print an `unrecognized_model` warning for this id; the turn still succeeds. If your CLI rejects the id, the usage probe falls back to `claude-haiku-4-5-20251001`; for a scout, pick another model in *New session*.
 
 **Can I change the model or effort for one session?** Yes. *New session* has an optional "Model and effort for this session" block per participant. It applies to that session only (the seat keeps its settings), and *Run again* keeps it. The Debate discussion rounds are capped at `medium` effort by default; turn off *Settings -> Cap effort in discussion rounds* to let each seat use its own effort there (more tokens).
 
