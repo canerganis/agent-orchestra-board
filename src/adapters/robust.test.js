@@ -291,7 +291,8 @@ test('limits.probeClaude: the CLI\'s own error result is the reported cause; an 
   });
   const r = await createLimits({ store, broadcast: () => {}, spawnFn: notLoggedIn }).probeClaude();
   assert.equal(r.ok, false);
-  assert.match(r.error, /^Claude limits probe failed: Invalid API key · Please run \/login$/);
+  // A login problem keeps the CLI's own text and says what to do.
+  assert.match(r.error, /^Claude limits probe failed: Claude CLI is not logged in \(Invalid API key · Please run \/login\)\. Run `claude` once to log in/);
   const noResult = fakeSpawn((c) => { c.out(J({ type: 'system', subtype: 'init', session_id: 'p2' }) + '\n'); c.stderr.write('API Error: 401 unauthorized\n'); c.close(1); });
   const r2 = await createLimits({ store, broadcast: () => {}, spawnFn: noResult }).probeClaude();
   assert.match(r2.error, /got no rate_limit_event: Claude CLI ended \(exit code 1\) before reporting a result: API Error: 401 unauthorized/);

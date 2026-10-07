@@ -1,10 +1,10 @@
 // Codex CLI adapter: `codex exec --json` / `codex exec resume <id>` arguments and stream parsing.
-const { CODEX_LEAN } = require('../config');
+const { codexLean } = require('../config');
 const { shortCmd, clip } = require('../util');
 const { createFeeder } = require('./jsonl');
 
 function buildArgs({ model, effort, mode = 'read', thread = null }) {
-  const cfg = [...CODEX_LEAN, '-c', `model="${model}"`, '-c', `model_reasoning_effort="${effort}"`, '-c', `sandbox_mode="${mode === 'write' ? 'workspace-write' : 'read-only'}"`];
+  const cfg = [...codexLean(), '-c', `model="${model}"`, '-c', `model_reasoning_effort="${effort}"`, '-c', `sandbox_mode="${mode === 'write' ? 'workspace-write' : 'read-only'}"`];
   if (process.platform === 'win32') cfg.push('-c', 'windows.sandbox="unelevated"');
   return thread ? ['exec', 'resume', thread, '--skip-git-repo-check', '--json', ...cfg, '-'] : ['exec', '--skip-git-repo-check', '--json', ...cfg, '-'];
 }
@@ -19,7 +19,7 @@ const errText = (e, fallback) => (typeof e === 'string' && e) || (isObj(e) && ty
 // `usage` is sent exactly once per turn.completed (zeros when the event carries no usage object; cost is always 0).
 function createParser(handlers = {}) {
   const on = (k, ...a) => { if (typeof handlers[k] === 'function') handlers[k](...a); };
-  let emitted = false;
+  let emitted = false, completed = false, failed = false, pendingError = null;
   const delta = (s) => { if (s) emitted = true; on('delta', s); };
 
   function itemCompleted(it) {
@@ -49,17 +49,28 @@ function createParser(handlers = {}) {
         // Net = uncached input + output; cached input is reported separately (much cheaper).
         const u = isObj(ev.usage) ? ev.usage : {}, cached = num(u.cached_input_tokens);
         on('usage', { tokens: Math.max(0, num(u.input_tokens) - cached) + num(u.output_tokens), cached, cost: 0 });
+        completed = true; pendingError = null;
         on('completed', { result: null });
         return true;
       }
-      case 'turn.failed': on('error', errText(ev.error, '') || errText(ev.message, 'codex error')); return true;
-      case 'error': on('error', errText(ev.error, '') || errText(ev.message, 'codex error')); return true;
+      case 'turn.failed': failed = true; on('error', errText(ev.error, '') || errText(ev.message, 'codex error')); return true;
+      case 'error': {
+        // Codex also reports its own recoverable stream retries this way ("stream disconnected - retrying sampling
+        // request (1/5 …)", "Reconnecting…") and the turn usually completes afterwards. turn.completed / turn.failed
+        // decide the outcome: an error only fails the turn when the stream ends with neither (see end()).
+        const m = errText(ev.error, '') || errText(ev.message, 'codex error');
+        on('item', 'error', m);
+        if (!completed && !failed) pendingError = m;
+        return true;
+      }
       default: return false;
     }
   }
 
   const feeder = createFeeder(event);
-  return { feed: feeder.feed, end: feeder.end, stats: feeder.stats, event };
+  // end(): flush the last line, then report a top-level error that no turn.completed / turn.failed followed.
+  const end = () => { feeder.end(); if (pendingError && !completed && !failed) { failed = true; on('error', pendingError); } };
+  return { feed: feeder.feed, end, stats: feeder.stats, event };
 }
 
 module.exports = { buildArgs, createParser };

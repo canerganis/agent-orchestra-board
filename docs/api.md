@@ -29,7 +29,7 @@ Content types: html, css, js, svg, png, ico, json.
 | Route | Returns |
 | --- | --- |
 | `GET /api/events` | SSE stream; first event `{"t":"hello"}`, heartbeat comment `: hb` every 15 s |
-| `GET /api/state` | `{project, models, efforts, seats: publicSeat[], rooms (<= 25, newest first, with messages), limits, settings}` |
+| `GET /api/state` | `{project, models, efforts, seats: publicSeat[], rooms (<= 25, newest first, with messages), limits, settings}`. A `naive: boolean` field (true when started with `ORCHESTRA_NAIVE=1`) is required by `bench/token-bench.mjs`; it is documented here as the contract and only present once `src/server.js` `state()` returns it. |
 | `GET /api/doctor` | `{ok, checks: [{id, name, status, detail, hint?}]}`; `ok` is false when any check has `status: "fail"`. Checks: `node`, `claude`, `codex` (CLI found and `--version` runs; a `.cmd` shim is `warn`, a missing CLI is `fail`), `claudeLogin`, `codexLogin`, `codexSandbox`, `pwsh`, `port`, `project`, `orchestra`. Over HTTP no port is passed, so `port` is always `skip` here (the `doctor` CLI tests it). Spawns only `<cli> --version`, never a model call. |
 
 ## Seats
@@ -96,3 +96,6 @@ Each `data:` line is a JSON object with a `t` field:
 | `PORT` | default port (overridden by `--port` or the legacy positional port); 4317 otherwise |
 | `ORCHESTRA_CLAUDE_BIN`, `ORCHESTRA_CODEX_BIN` | CLI executables, read at spawn time (`claude` / `codex` by default) |
 | `ORCHESTRA_LANG` | default `settings.lang` (`English`) |
+| `ORCHESTRA_NAIVE` | `1` turns the token levers off (no lean CLI flags, no scout, full transcripts, fresh threads, no early stop or effort cap). **Benchmark baseline only**, read at start; see [bench/README.md](../bench/README.md) |
+| `ORCHESTRA_RETRY_DELAYS_MS` | comma-separated delays in ms before each automatic retry of a transiently failed turn (`src/config.js` has the default) |
+| `ORCHESTRA_IDLE_MINUTES` | minutes of CLI silence before a turn is treated as a transient failure (`settings.idleMinutes` wins; default 5) |

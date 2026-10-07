@@ -19,7 +19,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. node bin/orchestra-board.js . --port 4317
+        1. node bin/agent-orchestra-board.js . --port 4317
         2. Create seats ... start a Debate with ...
         3. ...
     validations:
@@ -34,7 +34,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Orchestra Board version or commit
+      label: Agent Orchestra Board version or commit
       placeholder: 0.1.0 / 2cbf49c
     validations:
       required: true
@@ -58,12 +58,12 @@ body:
     id: logs
     attributes:
       label: Logs and room items
-      description: Server console output, the failing room's items panel (tool / reasoning / error), or `node bin/orchestra-board.js doctor` output. Redact paths and private text.
+      description: Server console output, the failing room's items panel (tool / reasoning / error), or `node bin/agent-orchestra-board.js doctor` output. Redact paths and private text.
       render: text
   - type: checkboxes
     id: checks
     attributes:
       label: Checks
       options:
-        - label: I ran `node bin/orchestra-board.js doctor` and included anything relevant.
+        - label: I ran `node bin/agent-orchestra-board.js doctor` and included anything relevant.
         - label: I searched existing issues.

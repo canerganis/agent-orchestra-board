@@ -1,27 +1,31 @@
 {
-  "name": "@0000can0000/orchestra-board",
+  "name": "agent-orchestra-board",
   "version": "0.1.0",
-  "description": "Local control board that orchestrates Claude CLI and Codex CLI agents (seats) in debate, propose-review and direct chat workflows.",
+  "description": "Local board that runs Claude Code CLI and Codex CLI agents as one team: debate, propose and review, and direct chat, with a live workflow view and usage meters.",
   "license": "MIT",
-  "homepage": "https://github.com/0000can0000/orchestra-board#readme",
+  "author": "Can Erganis",
+  "homepage": "https://github.com/canerganis/agent-orchestra-board#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0000can0000/orchestra-board.git"
+    "url": "git+https://github.com/canerganis/agent-orchestra-board.git"
   },
   "bugs": {
-    "url": "https://github.com/0000can0000/orchestra-board/issues"
+    "url": "https://github.com/canerganis/agent-orchestra-board/issues"
   },
   "keywords": [
-    "claude",
-    "codex",
+    "claude-code",
+    "codex-cli",
+    "multi-agent",
+    "agent-orchestration",
+    "ai-agents",
     "cli",
-    "agents",
-    "orchestration",
-    "local"
+    "local-first",
+    "zero-dependencies"
   ],
   "main": "src/server.js",
   "bin": {
-    "orchestra-board": "bin/orchestra-board.js"
+    "agent-orchestra-board": "bin/agent-orchestra-board.js",
+    "aob": "bin/agent-orchestra-board.js"
   },
   "files": [
     "bin",
@@ -33,8 +37,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node bin/orchestra-board.js",
+    "start": "node bin/agent-orchestra-board.js",
     "test": "node --test",
-    "doctor": "node bin/orchestra-board.js doctor"
+    "doctor": "node bin/agent-orchestra-board.js doctor"
   }
 }

@@ -43,8 +43,16 @@ function createRooms({ store, seats, runner, broadcast }) {
     if (!seat) { sys(room, `Agent "${seatId}" no longer exists; turn skipped.`); return { ok: false, error: 'no such agent', text: '' }; }
     const m = post(room, { seatId, name: seat.name, color: seat.color, agent: seat.agent, round: meta.round || room.round, label: meta.label || '', text: '', streaming: true });
     // Direct messages use the seat's long-lived thread; meetings and chains get a fresh thread per room.
-    const res = await runner.runSeat(seatId, prompt, { effort: meta.effort, runId: m.id, roomId: room.id, room: room.kind === 'dm' ? null : room, tools: meta.tools, withTarget: meta.withTarget ?? true, threadKey: meta.threadKey, cancelled: meta.cancelled });
-    Object.assign(m, { text: res.text || '', error: res.ok ? null : res.error, streaming: false, ended: now(), tokens: res.tokens, cached: res.cached, cost: res.cost, effort: meta.effort || seat.effort, tools: meta.tools || null });
+    // recovery/onRecover: if the CLI lost the thread, the runner starts a fresh one with this recap and we note it.
+    let res;
+    try {
+      res = await runner.runSeat(seatId, prompt, {
+        effort: meta.effort, runId: m.id, roomId: room.id, room: room.kind === 'dm' ? null : room, tools: meta.tools, withTarget: meta.withTarget ?? true, threadKey: meta.threadKey, cancelled: meta.cancelled,
+        recovery: () => recoveryPreamble(room, m, prompt), onRecover: (note) => sys(room, note, { recovery: { seatId, msgId: m.id } }),
+      });
+    } catch (e) { res = { ok: false, error: `internal error: ${(e && e.message) || e}`, text: '', failure: 'other' }; } // a turn never stalls a workflow
+    // failed: the workflow view marks this node failed; the meeting/chain continues with the others.
+    Object.assign(m, { text: res.text || '', error: res.ok ? null : res.error, failed: !res.ok, failure: res.ok ? null : res.failure || null, streaming: false, ended: now(), tokens: res.tokens, cached: res.cached, cost: res.cost, effort: meta.effort || seat.effort, tools: meta.tools || null });
     if (live(room)) broadcast({ t: 'msg', roomId: room.id, msg: m });
     room.usage = roomUsage(room); pushRoom(room);
     return { ...res, msg: m };
@@ -58,7 +66,23 @@ function createRooms({ store, seats, runner, broadcast }) {
     }
     return u;
   }
-  const NOT_DELIVERED = (m) => `Not delivered (no agent turn left to read it): "${clip(m.text)}"`;
+  // Context for a fresh thread that replaces a lost one: the room background (topic or task, plus the scout brief)
+  // and a compact recap of the latest messages. The runner prepends the role header; the turn prompt follows.
+  const RECAP_MESSAGES = 8, RECAP_CHARS = 600;
+  function recoveryPreamble(room, current = null, prompt = '') {
+    const parts = ['[Context recovery: your earlier conversation thread for this session could not be resumed. Background and a recap of the latest messages follow; continue from there.]'];
+    if (room.kind === 'meeting' && room.topic) parts.push(`Meeting topic:\n${room.topic}`);
+    if (room.kind === 'chain' && room.task) parts.push(`Task:\n${room.task}`);
+    const brief = room.messages.find((x) => x.round === 'scout' && x.text && !x.error && x.seatId !== 'system');
+    if (brief) parts.push(`Shared brief (by ${brief.name}):\n${brief.text}`);
+    const recent = room.messages.filter((x) => x !== current && x !== brief && !x.streaming && x.text && x.seatId !== 'system' && x.text !== prompt).slice(-RECAP_MESSAGES);
+    if (recent.length) {
+      const who = (x) => (x.seatId === 'user' ? 'User' : x.name || x.seatId);
+      parts.push(`Recap of the latest messages (oldest first, long ones shortened):\n${recent.map((x) => `${who(x)}${x.round && x.round !== 'scout' ? ` (round ${x.round})` : ''}: ${x.text.length > RECAP_CHARS ? x.text.slice(0, RECAP_CHARS) + '…' : x.text}`).join('\n\n')}`);
+    }
+    return parts.join('\n\n');
+  }
+  const NOT_DELIVERED =(m) => `Not delivered (no agent turn left to read it): "${clip(m.text)}"`;
   const sys = (room, text, extra = {}) => post(room, { seatId: 'system', name: 'system', text, ...extra });
   const userMsg = (room, text) => post(room, { seatId: 'user', name: 'You', text });
 
@@ -93,7 +117,7 @@ function createRooms({ store, seats, runner, broadcast }) {
   }
 
   load();
-  return { rooms, live, saveRoom, roomMeta, pushRoom, newRoom, post, say, roomUsage, NOT_DELIVERED, sys, userMsg, buildContext, stopRoom, deleteRoom, sendDm };
+  return { rooms, live, saveRoom, roomMeta, pushRoom, newRoom, post, say, recoveryPreamble, roomUsage, NOT_DELIVERED, sys, userMsg, buildContext, stopRoom, deleteRoom, sendDm };
 }
 
 module.exports = { createRooms };

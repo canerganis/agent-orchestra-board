@@ -1,127 +1,139 @@
-# Orchestra Board
+# Agent Orchestra Board
 
-A local control board that runs Claude Code and Codex CLI agents as a team and shows you the debate while it happens.
+**A local web board where Claude Code and Codex CLI agents debate a plan, propose and review each other's work, and show you every step live.**
 
-## Why
+[![CI](https://github.com/canerganis/agent-orchestra-board/actions/workflows/ci.yml/badge.svg)](https://github.com/canerganis/agent-orchestra-board/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
 
-- **Two vendors, one table.** Seats are either `claude -p` or `codex exec`. Put an Opus architect, a GPT reviewer and a devil's advocate in the same debate; let a Claude builder and a Codex reviewer loop on one task.
-- **Cost-aware by design.** Every turn is launched lean, agents only see what they have not seen yet, converged debates stop early, and every room shows net vs cached tokens and cost. The same 4-agent meeting went from **1.69M to 0.46M tokens (-73%)** after the token-lean pass.
-- **Live and local.** A zero-dependency Node server streams each turn over SSE: who is thinking, writing, running a command, and what it costs. Nothing leaves your machine except the CLIs' own API calls.
+<!-- TODO: add docs/screenshot.png (a Debate in progress: workflow view, seats, usage meters), then add `![Agent Orchestra Board: a Debate in progress](docs/screenshot.png)` here. -->
+
+Zero dependencies, runs on your own CLI logins (no API keys), read-only seats in v0.1.
+
+## What you get
+
+- **Two vendors at one table.** A seat is either `claude -p` or `codex exec`. Put an Opus-class architect, a GPT-class reviewer and a devil's advocate into the same room.
+- **Three workflows.** Debate, Propose -> Review and Direct chat (below).
+- **A live workflow view.** A zero-dependency Node server streams each turn over SSE: who is thinking, writing or running a command, what it said, what it cost.
+- **Cost you can see.** Every room shows net (uncached) vs cached tokens and the CLI-reported cost, and the board has experimental Claude and Codex usage-limit meters.
+- **Token-lean by design.** Lean CLI flags, one shared scout brief, unseen-only transcripts, early stop. See [Token savings](#token-savings) for the numbers and their limits.
+- **Local.** Binds `127.0.0.1`, session-token protected. Prompts and any code the agents read go to Anthropic and OpenAI through your CLIs, exactly as when you use them directly.
 
 ## Quick start
 
-Prerequisites: Node 20+ (20, 22 and 24 are tested), [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) logged in, [Codex CLI](https://github.com/openai/codex) logged in. One of the two is enough if all your seats use it: the board's setup card marks a CLI that no agent uses as *Optional*, and `doctor` still lists it as failed (ignore that line). The default team is one Claude seat and three Codex seats, so with only one CLI installed, open the other seats and switch their *Runtime* (or delete them) before the first Debate; the setup card names the affected seats, and the *New session* dialog proposes only seats whose CLI passed the check.
-
-**Windows:** the board spawns the CLIs without a shell, so the `claude.cmd` / `codex.cmd` shims that `npm i -g` creates do not work (Node cannot start a `.cmd` file: not found, or `EINVAL`). Use the native installers (`claude.exe`, `codex.exe`), or set `ORCHESTRA_CLAUDE_BIN` / `ORCHESTRA_CODEX_BIN` to the full path of an `.exe` (for an npm Codex install that is the vendored `codex.exe` inside the package). `doctor` flags a `.cmd` shim with a warning and tells you which file it found.
+Prerequisites: Node 20 or newer, and the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and/or the [Codex CLI](https://github.com/openai/codex), logged in. One of the two is enough if all your seats use it.
 
 ```sh
-git clone https://github.com/0000can0000/orchestra-board.git
-cd orchestra-board
-node bin/orchestra-board.js /path/to/your/project --open
+git clone https://github.com/canerganis/agent-orchestra-board.git
+cd agent-orchestra-board
+node bin/agent-orchestra-board.js /path/to/your/project --open
 ```
 
-The terminal prints a URL like `http://localhost:4317/?t=...`; open that one (or pass `--open`). The token in it is exchanged for a session cookie on first load, so plain <http://localhost:4317> works afterwards in the same browser.
+The terminal prints a URL like `http://localhost:4317/?t=...`. Open that one (or pass `--open`); the token in it is exchanged for a session cookie on first load.
 
-The package is not on npm yet. When it is, it will be published under the scoped name `@0000can0000/orchestra-board` (`npx @0000can0000/orchestra-board`). **Do not run `npx orchestra-board`:** the unscoped name on npm belongs to an unrelated project with a similar idea, and `npx` would download and execute that package.
+`npx agent-orchestra-board` will work once the package is published to npm. It is **not published yet**, so use the clone above. Do not run `npx orchestra-board`: that name belongs to an unrelated project. (Known gap: the rename is not finished in the program's own text yet. `--help`, error prefixes, the `doctor` hint and a few UI strings still print "orchestra-board" / "Orchestra Board"; the command to type is always `agent-orchestra-board` or `aob`.)
 
 ```
-node bin/orchestra-board.js [projectDir] [--port <n>] [--open]   # projectDir defaults to the current directory and must exist (exit 2 otherwise)
-node bin/orchestra-board.js doctor [projectDir] [--json]          # Node, CLIs and logins, Windows sandbox, port, state dir
-node bin/orchestra-board.js --version | --help
+node bin/agent-orchestra-board.js [projectDir] [--port <n>] [--open]   # projectDir defaults to the current directory
+node bin/agent-orchestra-board.js doctor [projectDir] [--json]          # Node, CLIs and logins, Windows sandbox, port, state dir
+node bin/agent-orchestra-board.js --version | --help
 ```
 
-Nothing puts an `orchestra-board` command on your `PATH` by default. Run `npm link` once in the clone (or `npm i -g .`) if you want the short form; the rest of this README writes `orchestra-board ...` for brevity, and `node bin/orchestra-board.js ...` is always equivalent.
+`npm link` (or `npm i -g .`) in the clone puts `agent-orchestra-board` and the short alias `aob` on your `PATH`. Run `doctor` first if anything looks off: it only runs `claude --version` / `codex --version`, never a billable turn. A CLI you do not have installed shows up as a failed check, so with one CLI expect one red line.
 
-Run `doctor` first if anything looks off: it only spawns `claude --version` / `codex --version`, never a billable turn, and exits 1 when a check fails. A CLI you do not have installed is such a failure, so with only one of the two installed expect one red line.
+The default team is one Claude seat and three Codex seats. With only one CLI installed, switch the other seats' *Runtime* (or delete them) before the first Debate; the setup card in the UI names the affected seats.
 
-The board binds `127.0.0.1` only. All state lives in `<project>/.orchestra/`: `seats.json`, `rooms/`, `limits.json`, `settings.json`, `BRAINSTORM.md`, `LOG.md`, `empty/` (an empty cwd for no-tools Codex turns) and `session`, the board's session token. **Never commit `session`**: it is the password to this board (see [SECURITY.md](SECURITY.md)). The board writes a `.orchestra/.gitignore` that lists `session` and `empty/` on first start, so you can ignore the whole directory or commit the rest (transcripts, syntheses, log), your call.
+All state lives in `<project>/.orchestra/` (`seats.json`, `rooms/`, `BRAINSTORM.md`, `LOG.md`, `session`, ...). **Never commit `session`**: it is the password to the board. The board writes a `.orchestra/.gitignore` that lists it.
 
 ## Workflows
 
-```
-Debate                         Propose -> Review                 Direct chat
-------                         -----------------                 -----------
-[scout brief] (read-only)      builder: proposal / edits         you <-> one seat
-      |                              |                            (own thread,
- round 1: all seats, parallel  reviewer: BLOCKER/SHOULD-FIX/NIT    resumable)
-      |                              |
- round 2..N: unseen msgs only   VERDICT: PASS  -> done
-   every "STANCE: CONVERGED"    VERDICT: FAIL  -> builder again
-   -> early stop                   (optional effort escalation,
-      |                             your notes go to the next turn)
-[facilitator synthesis]
-   -> .orchestra/BRAINSTORM.md
-```
+| Workflow | Seats | What happens | Ends |
+| --- | --- | --- | --- |
+| **Debate** | 2+ | Optional read-only **scout** writes a shared brief with `file:line` references. Round 1: every seat gives independent ideas in parallel. Later rounds: each seat sees only the messages it has not seen. Stops early when every seat ends with `STANCE: CONVERGED`. A **facilitator** synthesis is appended to `.orchestra/BRAINSTORM.md`. | `done` |
+| **Propose -> Review** | builder + reviewer | The builder proposes; the reviewer answers with BLOCKER / SHOULD-FIX / NIT findings and `VERDICT: PASS` or `FAIL`. On `FAIL` the builder goes again (up to 6 rounds, optional effort escalation, your notes go to the next turn). | `passed`, `needs-you` or `error` |
+| **Direct chat** | 1 | Talk to one seat in its own resumable thread; use it to settle what a room left open. | - |
 
-- **Debate**: 2+ seats, 1-5 rounds, optional scout and facilitator. A seat that has nothing new to say is skipped ("agreed silently") instead of spending a turn. You can interject at any time; the next speaker reads it.
-- **Propose -> Review**: a builder and a reviewer (different seats), up to 6 rounds. A read-only builder (the default) just proposes; a builder you set to `write` (see *Permissions*) edits files and the reviewer sees the `git diff`. Ends `passed`, `needs-you` (round limit without a PASS) or `error` (the builder could not run, for example a missing CLI).
-- **Direct chat**: talk to one seat in its own resumable thread; use it to settle what a room left open.
+You can interject in a Debate at any time; the next speaker reads it. Seats that have nothing new to add are skipped ("agreed silently").
 
-## Token-lean design
+## How it works
 
-Measured on 2026-10-07 with the default seats:
+One Node process, no build step. Workflows call a runner that spawns `claude -p --output-format stream-json` or `codex exec --json` as a child process, parses the JSONL stream, and pushes events to the browser over SSE. Each room is a JSON file under `.orchestra/rooms/`. Threads are scoped per room, so a seat does not drag another meeting along. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the module map, a data-flow diagram, the turn lifecycle and the security model, [docs/api.md](docs/api.md) for the HTTP and SSE contract, and [docs/decisions/](docs/decisions/README.md) for the decision records.
+
+## Token savings
+
+The levers, all on by default:
 
 | Lever | Effect |
 | --- | --- |
-| Lean CLI launch (no user plugins, MCP servers, skills, hooks, slash commands or extra tool families) | Claude baseline **36k -> 6.7k tokens per call**; Codex 24k -> 15k |
-| Per-mode tools: discussion rounds and synthesis run with no tools; the scout gets `Read`/`Grep`/`Glob` only; a review turn runs with the reviewer seat's own permission (read tools for a `read` seat) | no code re-reads during debate |
-| Scout brief in its own thread, shared with everyone | files are read once, not once per seat |
-| Per-room threads and unseen-only transcripts (marked seen only after a successful turn) | each turn carries only the delta |
-| Early stop on `STANCE: CONVERGED`, silent agreement, effort cap for discussion rounds | fewer and cheaper turns |
-| Net vs cached accounting (`tokens` = uncached input + output; cached input shown separately) | cached input is billed at a discount and still counts toward plan limits, so the two are kept apart; the cost column (Claude only, Codex reports 0) is the actual spend |
-| **Same 4-agent meeting** | **1.69M -> 0.46M tokens (-73%)** |
+| Lean CLI launch (no user plugins, MCP servers, skills, hooks, slash commands, extra tool families) | Per-call baseline **36k -> 6.7k tokens** for Claude and 24k -> 15k for Codex, **on my setup, which has several MCP servers and skills**. A bare install will see a much smaller saving. |
+| Tools only where needed | Discussion rounds and synthesis run with no tools; the scout gets `Read`/`Grep`/`Glob`. |
+| One scout brief in its own thread | Files are read once, not once per seat. |
+| Per-room threads and unseen-only transcripts | Each turn carries only the delta. |
+| Early stop, silent agreement | Fewer turns (neither fired in the measured run, see below). |
+| Effort cap (discussion rounds at `medium`) | Cheaper reasoning per turn. Added after the measured run, so it is **not** part of the measured figure. |
 
-Per-seat token budgets stop a seat once it has used its allowance.
+**What was measured:** the same 4-agent planning meeting (default seats: 1 Claude + 3 Codex, 2 rounds + synthesis, scout and facilitator among the four) ran once on the pre-redesign board and once on the token-lean board, 12 minutes apart. Total tokens went from **1,686,111 to 461,540 (-73%)**; the Claude-reported cost of the Claude turns went from $1.02 to $0.16.
 
-## Permissions and safety
+**Read this before quoting it.** It is **one run per arm on one machine** (Windows 11, Claude Code 2.1.291, Codex CLI 0.160.0, 2026-10-07), not a benchmark. The "before" ran on older code that is not in this repository and also had bugs fixed later, so the difference mixes the token levers with other changes. "Total" means every input token the CLIs reported, cache reads included, plus output; it is the only figure both runs have, because the old board stored one undivided count per turn. The after run was 204,374 uncached + 257,166 cached. Early stop did not fire in either run, and the after run predates the effort cap (Sol still ran round 2 at `high`). Output quality was not measured. My impression is that the scout brief was the biggest saving, but the levers were not measured separately. The trade-off: only the scout reads code, so a shallow brief misleads every seat, and the `file:line` citations in later rounds are copied from it, not re-checked.
 
-- **Read-only by default.** Seats start with `perm: read`. Claude gets `--tools Read Grep Glob`; Codex runs in `sandbox_mode=read-only`. Only a seat you explicitly set to `write` can edit files: Claude with `--permission-mode acceptEdits` (edits are auto-approved, no prompt) plus `Edit`/`Write`, Codex with `sandbox_mode=workspace-write`.
-- **Enabling write is deliberate and outside the UI.** The v0.1 agent editor shows a seat's permission but has no toggle for it; saving a seat keeps its permission as is. To grant write: stop the board, set `"perm": "write"` on the seat in `<project>/.orchestra/seats.json`, start again (the seat's memory is reset because its first message fixed the permission), or `POST /api/seats` with `{"id": "<seat>", "perm": "write"}` from an authenticated client (see [docs/api.md](docs/api.md)). The home page and the agent editor then say which seats can edit.
-- **How far a write seat is confined differs by CLI.** A Codex write seat runs with the target directory as its sandbox cwd, so its edits are confined to that directory. A Claude write seat always runs with the project root as cwd (Claude stores sessions per cwd), so `acceptEdits` can touch **any file in the project**; its target is a prompt-level instruction ("Your scope is ... Stay inside it."), not an enforced boundary. Neither CLI can write outside the project through the board, but treat a Claude write seat as having the whole project.
-- **Local only.** The server listens on `127.0.0.1`. A request is served only if its `Host` is exactly `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>` (blocks DNS rebinding), any `Origin` is one of those (blocks cross-site requests), and every `POST` is `application/json` with type- and length-checked fields. Static files are served only from `public/`; responses carry a strict CSP and `no-store`.
-- **Session token.** Each project gets a random token, kept in `<project>/.orchestra/session` (mode 0600) and printed in the start URL, exchanged for an `HttpOnly; SameSite=Strict` cookie, and required on every `/api/*` request. A web page you happen to have open, or another local process without your terminal, gets `401`. The cookie dies with the browser session; a restart of the board keeps it valid (delete `.orchestra/session` to rotate the token). Still: do not expose the port with a tunnel or reverse proxy.
-- **Targets stay inside the project.** A seat's target is resolved with `realpath` and rejected if it points outside the project (`..`, absolute paths, symlinks out).
-- **The project never supplies the CLI.** Every child process (`claude`, `codex`, their `--version` probes, `git`, `taskkill`) is resolved on `PATH` (or at `ORCHESTRA_*_BIN`) and started by absolute path. A `claude.exe` or `codex.exe` planted at the root of a repository you point the board at is never run, even though Windows would otherwise look in the child's working directory first; `doctor` points such a file out.
-- **Costs are yours.** Turns run under your own Claude and Codex logins and count against your plans. The *Refresh Claude usage* button spawns one tiny Claude Haiku call (under $0.01: the lean launch is about 7k tokens) because that is the only way to read Claude's rate-limit window.
-- The CLIs run with your user account's permissions. Keep write seats pointed at a target directory you are happy to let an agent edit, and review the diff.
+The raw rooms (sanitized) and a script that recomputes every number are in [docs/measurements/2026-10-07/](docs/measurements/2026-10-07/README.md). [bench/](bench/README.md) has a harness for a repeatable lean-vs-naive comparison (a second board started with `ORCHESTRA_NAIVE=1`; it also needs `naive` in `GET /api/state`, see its README); no result from it has been published yet.
+
+## Safety and permissions
+
+- **Read-only in v0.1.** Seats run read-only: Claude with `--tools Read Grep Glob --permission-mode dontAsk` (a tool outside the list is denied instead of prompting), Codex with `sandbox_mode=read-only`. The UI has no write option. Read-only is enforced by the vendors' CLIs, not by the board.
+- **Never uses `--dangerously-skip-permissions`.**
+- **Localhost only.** The server binds `127.0.0.1`, accepts only local `Host` and `Origin` values (DNS-rebinding and cross-site protection), takes only validated `application/json` POSTs and sends a strict CSP.
+- **Session token.** Each project gets a random token in `.orchestra/session` (mode 0600), exchanged for an `HttpOnly; SameSite=Strict` cookie and required on every `/api/*` request. A web page you happen to have open, or another local process, gets `401`. Do not expose the port through a tunnel or reverse proxy.
+- **Targets stay inside the project** (resolved with `realpath`), and **the project never supplies the CLI**: every child process is resolved on `PATH` and started by absolute path, so an executable planted in a repository you point the board at is never run.
+- **Costs are yours.** Turns run under your own logins and count against your plans. The *Refresh Claude usage* button makes one small Haiku call because that is the only way to read Claude's rate-limit window.
+- **Not affiliated with Anthropic or OpenAI.** Claude and Claude Code are trademarks of Anthropic; Codex is a product of OpenAI; this project only drives the CLIs you installed.
+
+Write-capable seats exist in the engine but are deliberately not offered in the UI yet; they run unattended with your user permissions and there is no container or worktree isolation. The details and the threat model are in [SECURITY.md](SECURITY.md) and [ADR 0004](docs/decisions/0004-read-only-v0-1.md).
+
+## Windows notes
+
+Windows 11 is the primary development platform.
+
+- **Use the native CLI installers.** The board spawns the CLIs without a shell, so the `claude.cmd` / `codex.cmd` shims that `npm i -g` creates do not work (Node cannot start a `.cmd` file). Use `claude.exe` / `codex.exe`, or set `ORCHESTRA_CLAUDE_BIN` / `ORCHESTRA_CODEX_BIN` to the full path of an `.exe`. `doctor` flags a `.cmd` shim.
+- **Codex sandbox fix.** The Codex sandbox cannot launch the Microsoft Store `pwsh` alias under its restricted token, which fails with access denied. Codex children therefore run with `-c windows.sandbox="unelevated"` and a `PATH` without `WindowsApps`. `taskkill /T /F` stops a seat together with everything it spawned.
+- macOS and Linux run the same code paths minus those two fixes. CI runs the test suite on Ubuntu, macOS and Windows (Node 20, 22, 24) against fake CLIs; real-CLI runs have only been done on Windows 11.
 
 ## Limitations
 
-- **Usage meters are experimental.** Claude limits come from the `rate_limit_event` in the stream; Codex limits are read from the newest rollout file under `$CODEX_HOME/sessions` (default `~/.codex/sessions`). Both formats are undocumented and may change.
-- **A server restart stops running jobs.** Rooms are persisted, but a turn in flight is killed with the server; use *Run again* or *Continue in Direct chat*.
-- **CLI output formats can change.** The adapters parse `claude --output-format stream-json` and `codex exec --json`. Developed against Codex CLI 0.160.0 and Claude Code CLI 2.1.291 (2026-10-07); run `orchestra-board doctor` after upgrading either. The lean launch flags are covered by unit tests on the argument lists, not by a paid run in CI.
-- Windows is the primary development platform (Windows 11, Git Bash and PowerShell). macOS and Linux run the same code paths minus the Windows sandbox and process-tree fixes; the test suite runs on all three in CI (Node 20, 22 and 24), but they have had less manual testing.
-- One session token per project (persisted in `.orchestra/session`, valid for every browser you open the printed URL in), one project per board, no remote access: v0.1 is a single-user local tool on purpose.
+- Usage meters are experimental; both source formats are undocumented and may change.
+- A server restart stops turns in flight (use *Run again* or *Continue in Direct chat*).
+- The adapters parse `claude --output-format stream-json` and `codex exec --json`. Developed against Codex CLI 0.160.0 and Claude Code CLI 2.1.291 (2026-10-07); run `doctor` after upgrading either. The lean flags are covered by unit tests on the argument lists, not by a paid run in CI.
+- One user, one project per board, no remote access, on purpose.
 
 ## FAQ
 
-**Does it need an API key?** No. It shells out to the `claude` and `codex` CLIs you are already logged into. Point `ORCHESTRA_CLAUDE_BIN` / `ORCHESTRA_CODEX_BIN` at other executables if they are not on `PATH`.
+**Does it need an API key?** No. It shells out to the `claude` and `codex` CLIs you are already logged into.
 
-**Which models?** The ones your CLIs offer. The seat editor suggests common names, but any name or alias your CLI accepts can be typed in; only a malformed name is rejected. Effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex).
+**Which models?** The ones your CLIs offer. Type any name or alias your CLI accepts; effort levels map to `--effort` (Claude) and `model_reasoning_effort` (Codex).
 
-**Can agents reply in my language?** Yes. The UI is English; set *Settings -> language* (or `ORCHESTRA_LANG`) and every seat is told to reply in it.
+**Can agents reply in my language?** Yes. The UI is English; set *Settings -> Agents reply in* (or `ORCHESTRA_LANG`) and every seat is told to reply in it.
 
-**What does a seat see of my project?** The project root, by default. A seat without a *target* works in the project directory and, in any turn that has tools, can read it (Claude `Read`/`Grep`/`Glob`; Codex a shell in a read-only sandbox, which can also read outside the project). A target narrows that: a target directory becomes the working directory and a short listing of it goes into the prompt; a target file is pasted into the prompt. Which turns have tools: Direct chat, Propose -> Review turns and Debate round 1 without a scout run with read tools (or the seat's permission); the scout brief runs with read tools; discussion rounds 2+, the synthesis, and round 1 when a scout brief exists run with no tools at all.
+**What does a seat see of my project?** The project root by default. In turns that have tools, a Claude seat can use `Read`/`Grep`/`Glob` and a Codex seat has a read-only shell (which can also read outside the project). A seat *target* narrows the working directory. Discussion rounds, the synthesis and round 1 after a scout run with no tools.
 
-**Where do results go?** Each room is `.orchestra/rooms/<id>.json`. Facilitator syntheses are appended to `.orchestra/BRAINSTORM.md`. `.orchestra/LOG.md` gets one summary line per finished Debate or Propose -> Review loop (Direct chat is not logged). Starting a room *with context* attaches the tail of `LOG.md` plus `.orchestra/PLAN.md` and `.orchestra/HANDOFF.md` if those files exist; they must live inside `.orchestra/`, not the project root.
+**Where do results go?** `.orchestra/rooms/<id>.json` per room, facilitator syntheses in `.orchestra/BRAINSTORM.md`, one summary line per finished Debate or Propose -> Review in `.orchestra/LOG.md`.
 
-**Why Node and zero dependencies?** You already have Node for the CLIs, and a one-file install with nothing to audit is the point of a local tool.
+**How is it different from claude-squad, vibe-kanban, codex-plugin-cc or Orchestra?** I have not benchmarked against them; this is how I understand the scope, so check their READMEs. *claude-squad* and *vibe-kanban* are about managing many parallel agent sessions or tasks; this tool is about a few agents from two vendors discussing or reviewing one thing in one room, with a transcript and a synthesis. *codex-plugin-cc* is OpenAI's plugin for using Codex from inside Claude Code; here Claude and Codex are peers at the same table instead. *Orchestra* (npm `orchestra-board`) is an unrelated project with a similar idea and name, which is why this package is called `agent-orchestra-board`. This is not an autonomous coding agent, not a cloud product, and not a kanban over many tasks.
 
-**Why does the Windows build pass odd flags to Codex?** `-c windows.sandbox="unelevated"` and a `PATH` without `WindowsApps` keep the Codex sandbox from tripping over the Microsoft Store `pwsh` alias; `taskkill /T /F` is how a seat is stopped together with everything it spawned.
+**Why Node and zero dependencies?** You already have Node for the CLIs, and nothing to install or audit is the point of a local tool that can drive agents ([ADR 0001](docs/decisions/0001-zero-dependencies.md)).
 
-**The page says "Session required".** You opened `http://localhost:4317` directly in a browser that has not seen this board's token. Open the URL printed in the terminal (it ends in `/?t=...`), or restart with `--open`.
+**The page says "Session required".** Open the URL printed in the terminal (it ends in `/?t=...`), or restart with `--open`.
 
-**Something is off. Where do I look?** `orchestra-board doctor`, then the room's *items* panel (tool calls, reasoning, errors), then `GET /api/state` from the authenticated browser. See [docs/api.md](docs/api.md) for the HTTP and SSE contract and [docs/architecture.md](docs/architecture.md) for the module map.
+**Something is off. Where do I look?** `doctor`, then the room's *items* panel (tool calls, reasoning, errors), then `GET /api/state` from the authenticated browser.
 
 ## Development
 
 ```sh
-npm test                       # node:test, no real CLI is spawned
-node bin/orchestra-board.js doctor --json
+npm test                       # node:test; no real CLI is spawned
+node bin/agent-orchestra-board.js doctor --json
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Never point tests at the real CLIs: set `ORCHESTRA_CLAUDE_BIN=fake-claude ORCHESTRA_CODEX_BIN=fake-codex`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [CHANGELOG](CHANGELOG.md). Never point tests at the real CLIs; the suite uses fake ones. Security issues: [SECURITY.md](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE) - Orchestra Board contributors.
+[MIT](LICENSE) - Copyright (c) 2026 Can Erganis.

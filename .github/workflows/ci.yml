@@ -37,9 +37,13 @@ jobs:
         shell: bash
         run: |
           set -e
-          for f in server.js bin/orchestra-board.js $(find src test public -name '*.js'); do
+          for f in server.js bin/*.js bench/*.mjs docs/measurements/*/*.mjs $(find src test public -name '*.js'); do
             node --check "$f"
           done
+
+      - name: Measurement script smoke test
+        shell: bash
+        run: node docs/measurements/2026-10-07/summarize.mjs > /dev/null
 
       - name: Unit tests
         run: npm test
@@ -51,7 +55,7 @@ jobs:
           P="$RUNNER_TEMP/ob-smoke"
           mkdir -p "$P"
           B=http://127.0.0.1:4391
-          NO_COLOR=1 node bin/orchestra-board.js "$P" --port 4391 > "$P/server.log" 2>&1 &
+          NO_COLOR=1 node bin/agent-orchestra-board.js "$P" --port 4391 > "$P/server.log" 2>&1 &
           PID=$!
           # Wait until the port answers and the banner with the session token is in the log (60 s cap).
           for i in $(seq 1 120); do
@@ -84,6 +88,6 @@ jobs:
           # The token file is ignored by git inside the state directory.
           grep -q '^session$' "$P/.orchestra/.gitignore"
           # A mistyped project path must exit 2 and create nothing.
-          if node bin/orchestra-board.js "$RUNNER_TEMP/does-not-exist-ob" --port 4392; then echo "missing project dir was accepted"; kill $PID || true; exit 1; fi
+          if node bin/agent-orchestra-board.js "$RUNNER_TEMP/does-not-exist-ob" --port 4392; then echo "missing project dir was accepted"; kill $PID || true; exit 1; fi
           [ ! -e "$RUNNER_TEMP/does-not-exist-ob" ]
           kill $PID || true

@@ -17,8 +17,8 @@ These are deliberate and pull requests that reverse them will not be merged:
 ## Setup
 
 ```sh
-git clone https://github.com/0000can0000/orchestra-board.git
-cd orchestra-board
+git clone https://github.com/canerganis/agent-orchestra-board.git
+cd agent-orchestra-board
 npm test
 ```
 
@@ -30,7 +30,7 @@ Node 20, 22 or 24. No install step. Windows (Git Bash or PowerShell), macOS and 
 
 ```sh
 P=$(mktemp -d)
-ORCHESTRA_CLAUDE_BIN=fake-claude ORCHESTRA_CODEX_BIN=fake-codex node bin/orchestra-board.js "$P" --port 4391
+ORCHESTRA_CLAUDE_BIN=fake-claude ORCHESTRA_CODEX_BIN=fake-codex node bin/agent-orchestra-board.js "$P" --port 4391
 ```
 
 Seats will fail to spawn (status `error`), which is enough to exercise the server, the UI and the SSE stream. Kill the server and delete `$P` afterwards.
@@ -38,7 +38,7 @@ Seats will fail to spawn (status `error`), which is enough to exercise the serve
 ## Tests and checks
 
 ```sh
-for f in server.js bin/orchestra-board.js $(find src test public -name '*.js'); do node --check "$f" || echo "FAIL $f"; done
+for f in server.js bin/agent-orchestra-board.js $(find src test public -name '*.js'); do node --check "$f" || echo "FAIL $f"; done
 npm test
 ```
 
@@ -64,10 +64,10 @@ Tests use `node:test`, which picks up every `*.test.js` in the tree: `test/*.tes
 
 Before tagging a release:
 
-1. The GitHub links (`README.md`, this file, `CHANGELOG.md`, `package.json`, `.github/ISSUE_TEMPLATE/config.yml`) point at `0000can0000/orchestra-board`; update them if the repository moves. The npm name is the scoped `@0000can0000/orchestra-board`: the unscoped `orchestra-board` belongs to an unrelated project, so never publish under, or tell users to `npx`, the bare name.
+1. The GitHub links (`README.md`, this file, `CHANGELOG.md`, `package.json`, `.github/ISSUE_TEMPLATE/config.yml`) point at `canerganis/agent-orchestra-board`; update them if the repository moves. The npm name is `agent-orchestra-board` (bins `agent-orchestra-board` and `aob`): the name `orchestra-board` belongs to an unrelated project, so never publish under, or tell users to `npx`, that name.
 2. Enable *Private vulnerability reporting* in the repository's Security settings; `SECURITY.md` and the issue template point reporters there.
 3. Commit everything (`git status` clean), push, and wait for all 9 CI jobs (3 OSes x Node 20/22/24) to pass before tagging.
-4. Run `npm test` with `ORCHESTRA_CLAUDE_BIN=fake-claude ORCHESTRA_CODEX_BIN=fake-codex` set and once without, and `node bin/orchestra-board.js doctor` against the current CLI versions.
+4. Run `npm test` with `ORCHESTRA_CLAUDE_BIN=fake-claude ORCHESTRA_CODEX_BIN=fake-codex` set and once without, and `node bin/agent-orchestra-board.js doctor` against the current CLI versions.
 5. One deliberate paid smoke test against the real CLIs: a Direct chat with one Claude seat and one Codex seat, plus one *Refresh Claude usage*. This is the only check of the lean launch flags against the installed CLI versions (unit tests cover the argument lists only). Record the versions in `README.md` (*Limitations*) and `CHANGELOG.md`.
 
 ## Reporting issues

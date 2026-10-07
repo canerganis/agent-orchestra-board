@@ -218,8 +218,9 @@ test('both parsers: handlers are optional (no throw when none is given) and even
   assert.deepEqual(events, [['thread', 'direct']]);
 });
 
-test('buildProbeArgs: Haiku, low effort, no session persistence, no tools, lean flags', () => {
+test('buildProbeArgs: Haiku, no --effort, no session persistence, no tools, lean flags', () => {
   const a = claude.buildProbeArgs();
+  assert.ok(!a.includes('--effort'), 'Haiku takes no effort flag');
   assert.ok(a.includes('claude-haiku-4-5-20251001') && a.includes('--no-session-persistence') && a.includes('--strict-mcp-config'));
   assert.deepEqual(a.slice(-2), ['--tools', '']);
   assert.ok(!a.includes('--resume') && !a.includes('--session-id'));
@@ -231,7 +232,9 @@ test('claude buildArgs: lean flags, model/effort, add-dir, and the --tools list 
   assert.ok(a.includes('--model') && a[a.indexOf('--model') + 1] === 'claude-sonnet-5-5' && a[a.indexOf('--effort') + 1] === 'high');
   assert.ok(a.includes('--strict-mcp-config') && a.includes('--disable-slash-commands') && a.includes('--exclude-dynamic-system-prompt-sections'));
   assert.deepEqual(a.slice(a.indexOf('--add-dir'), a.indexOf('--add-dir') + 2), ['--add-dir', 'D:\\elsewhere']);
-  assert.ok(!a.includes('--resume') && !a.includes('--session-id') && !a.includes('--permission-mode'));
+  assert.ok(!a.includes('--resume') && !a.includes('--session-id'));
+  assert.deepEqual(a.slice(a.indexOf('--permission-mode'), a.indexOf('--permission-mode') + 2), ['--permission-mode', 'dontAsk'], 'read turns: dontAsk');
+  assert.equal(a.indexOf('--tools'), a.length - 4, '--tools stays last (variadic)');
   assert.deepEqual(claude.buildArgs({ model: 'm', effort: 'low', mode: 'write' }).slice(-5), ['Read', 'Grep', 'Glob', 'Edit', 'Write']);
 });
 

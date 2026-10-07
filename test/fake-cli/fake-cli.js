@@ -8,12 +8,15 @@
 //
 // scenario.json: { rules: [rule, ...], default?: rule }  (first matching rule wins)
 //   rule selectors: agent ('claude'|'codex'), seat (seat name from the role header), match (regex on the
-//                   prompt, dotall), nth (1-based call number for that seat)
+//                   prompt, dotall), nth (1-based call number for that seat), resume (true: only resumed turns,
+//                   false: only new threads)
 //   rule actions:   reply (text), usage ({input, cacheCreation, cacheRead, output, cost} | {input, cached, output}),
 //                   rateLimit (claude rate_limit_info object), thinking (bool), tool (bool), reasoning (text),
 //                   events (extra raw events emitted before the result), error (message -> failed turn),
 //                   crash (stderr text; exits without a completed turn), exit (exit code), gate (name: wait for
-//                   <OB_FAKE_DIR>/gates/<name> before answering), delayMs, hang (never finishes)
+//                   <OB_FAKE_DIR>/gates/<name> before answering), delayMs, hang (never finishes),
+//                   lostThread (the resumed thread is gone: prints the CLI's own not-found message on stderr, no
+//                   stdout, exit 1, like claude --resume / codex exec resume with an unknown id)
 //
 // Thread bookkeeping mirrors the real CLIs: claude `--session-id` / `--resume`, codex `exec resume <id>`.
 // The seat name is taken from the runner's role header on the first turn of a thread and remembered under
@@ -64,6 +67,7 @@ function pickRule(scenario, ctx) {
     if (r.agent && r.agent !== ctx.agent) continue;
     if (r.seat && r.seat !== ctx.seat) continue;
     if (r.nth && r.nth !== ctx.nth) continue;
+    if (typeof r.resume === 'boolean' && r.resume !== ctx.resume) continue;
     if (r.match && !new RegExp(r.match, 's').test(ctx.prompt)) continue;
     return { rule: r, index: i };
   }
@@ -143,7 +147,7 @@ async function main() {
   const scenario = readJson(path.join(DIR, 'scenario.json'), {});
   const prev = readCalls();
   const nth = prev.filter((c) => c.seat === seat).length + 1;
-  const { rule, index } = pickRule(scenario, { agent: a.agent, seat, nth, prompt });
+  const { rule, index } = pickRule(scenario, { agent: a.agent, seat, nth, prompt, resume: !!a.resume });
   const reply = rule.reply ?? 'ok';
 
   fs.appendFileSync(path.join(DIR, 'calls.jsonl'), JSON.stringify({
@@ -152,6 +156,11 @@ async function main() {
     rule: index, pid: process.pid, ppid: process.ppid, ts: new Date().toISOString(),
   }) + '\n');
 
+  if (rule.lostThread) {
+    await write(process.stderr, a.agent === 'codex' ? `Error: thread/resume failed: no rollout found for thread id ${a.resume}\n` : `No conversation found with session ID: ${a.resume}\n`);
+    process.exitCode = 1;
+    return;
+  }
   const ev = a.agent === 'codex' ? codexEvents(rule, a, thread, reply) : claudeEvents(rule, a, thread || 'probe-' + process.pid, reply);
   await write(process.stdout, jsonl(ev.head));
   if (rule.hang) {

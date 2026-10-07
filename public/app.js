@@ -1,15 +1,20 @@
-/* Orchestra Board frontend — plain script, no build step. State, rendering, SSE client, API calls. */
+/* Agent Orchestra Board frontend — plain script, no build step. State, rendering, SSE client, API calls. */
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const icon = (id, style = '') => `<svg class="i" aria-hidden="true"${style ? ` style="${style}"` : ''}><use href="#i-${id}"/></svg>`;
+const icon = (id, size = 16) => `<svg class="i" width="${size}" height="${size}" style="width:${size}px;height:${size}px" aria-hidden="true" focusable="false"><use href="#i-${id}"/></svg>`;
 const fmtTok = (n) => { n = n || 0; return n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)); };
-const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
+const fmtDur = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); if (s < 60) return `${s}s`; const m = Math.floor(s / 60); return m < 60 ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`; };
+const fmtCost = (c) => '$' + (c > 0 && c < 0.01 ? c.toFixed(3) : (c || 0).toFixed(2));
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; return s < 60 ? 'now' : s < 3600 ? `${Math.floor(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`; };
 const hhmm = (d) => new Date(d).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-const initials = (n) => String(n || '?').trim().charAt(0).toUpperCase();
+const cap = (s) => String(s || '').replace(/^./, (c) => c.toUpperCase());
+const APP = 'Agent Orchestra Board';
 const EFFORT = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
-const STATUS = { running: 'Running', done: 'Done', passed: 'Passed', 'needs-you': 'Needs you', stopped: 'Stopped', error: 'Error', idle: 'Idle' };
+// Fixed status vocabulary: always a dot (or icon) plus a word.
+const STATUS = { running: 'Running', done: 'Done', passed: 'Passed', 'needs-you': 'Needs you', stopped: 'Stopped', error: 'Failed', idle: 'Idle' };
+const ST_DOT = { running: 'run', done: 'ok', passed: 'ok', 'needs-you': 'warn', stopped: 'hollow', error: 'fail', idle: 'hollow' };
+const statusHtml = (st, word) => `<span class="state"><span class="dot ${ST_DOT[st] || 'hollow'}" aria-hidden="true"></span>${esc(word || STATUS[st] || st)}</span>`;
 const lastLine = (t) => (t || '').trim().split(/\r?\n/).pop().replace(/[*`_]/g, '').trim();
 const ls = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform || '');
@@ -34,7 +39,7 @@ let gated = false;
 function authGate() {
   if (gated) return; gated = true;
   overlay(`<div class="modal-h"><h2 class="modal-t" id="dlgTitle">${icon('lock')}Session not recognised</h2></div>
-    <div class="modal-b"><p style="margin-top:14px">This board only answers a browser the server has signed in. Go back to the terminal where <code class="inline">orchestra-board</code> is running and open the link it printed: it sets a session cookie for this browser. The link itself is not needed again.</p>
+    <div class="modal-b"><p>This board only answers a browser the server has signed in. Go back to the terminal where the board is running and open the link it printed: it sets a session cookie for this browser. The link itself is not needed again.</p>
     <p class="hint">This browser's session does not match this board — most likely a different project is running on this port, or the board's <code class="inline">.orchestra/session</code> file was deleted or rotated. A plain server restart keeps the session valid.</p></div>
     <div class="modal-f"><button class="btn primary" id="gReload">Reload</button></div>`, 'modal sm', { locked: true });
   $('#gReload').onclick = () => location.reload();
@@ -66,12 +71,17 @@ function download(name, text, type = 'text/markdown;charset=utf-8') {
 const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'session';
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-copy]'); if (b) copyText(b.dataset.copy, b.dataset.copyMsg || 'Copied to clipboard'); });
 
-const S = { seats: {}, order: [], rooms: {}, active: null, models: {}, efforts: {}, limits: {}, settings: {}, connected: false, doctor: null, setupOpen: false };
-const roundLabel = (round) => typeof round === 'number' ? `Round ${round}` : round ? String(round).replace(/^./, (c) => c.toUpperCase()) : '';
-const seatColor = (id) => S.seats[id]?.color || 'var(--text-3)';
-const avatar = (id, cls = '') => { const s = S.seats[id]; return `<span class="av ${cls} ${s?.status === 'working' ? 'working' : ''}" style="--c:${s?.color || 'var(--text-3)'}" aria-hidden="true">${initials(s?.name || id)}</span>`; };
-const kindIcon = (k) => k === 'meeting' ? 'users' : k === 'chain' ? 'loop' : 'chat';
+const S = { seats: {}, order: [], rooms: {}, active: null, models: {}, efforts: {}, limits: {}, settings: {}, connected: false, doctor: null, setupOpen: false, query: '', cli: null };
+const roundLabel = (round) => typeof round === 'number' ? `Round ${round}` : round ? cap(round) : '';
+// Every agent is labelled tool first; its avatar carries the tool mark (asterisk = Claude Code, prompt = Codex).
+const TOOL = { claude: 'Claude Code', codex: 'Codex' };
+const toolMark = (agent) => `<svg aria-hidden="true" focusable="false"><use href="#t-${agent === 'claude' ? 'claude' : 'codex'}"/></svg>`;
+const avatar = (id, cls = '', agent) => { const a = agent || S.seats[id]?.agent || 'codex'; return `<span class="av ${a === 'claude' ? 'claude' : 'codex'} ${cls}" aria-hidden="true">${toolMark(a)}</span>`; };
+const userAvatar = (cls = '') => `<span class="av user ${cls}" aria-hidden="true"><svg aria-hidden="true" focusable="false"><use href="#i-user"/></svg></span>`;
+const KIND_ICON = { meeting: 'debate', chain: 'review', dm: 'chat' };
+const kindIcon = (k) => KIND_ICON[k] || 'chat';
 const KIND = { meeting: 'Debate', chain: 'Propose → Review', dm: 'Direct chat' };
+const isAgentMsg = (m) => m && m.seatId !== 'system' && m.seatId !== 'user';
 
 /* ================= top bar ================= */
 const WIN = { five_hour: '5-hour', seven_day: 'Weekly', seven_day_opus: 'Weekly Opus', seven_day_sonnet: 'Weekly Sonnet' };
@@ -93,25 +103,28 @@ let meterPop = false;
 const limitErrors = () => Object.entries(S.limits || {}).filter(([, l]) => l && l.error).map(([agent, l]) => ({ agent, error: String(l.error), at: l.errorAt }));
 function renderMeters() {
   const groups = meterGroups(), errs = limitErrors(), errOf = (agent) => errs.find((e) => e.agent === agent);
+  const summary = [];
+  // Each CLI shows its fullest window; every window is in the popover.
   const meters = groups.map(([agent, ws]) => {
     const m = ws.reduce((a, b) => (b.pct > a.pct ? b : a));
-    const col = m.pct >= 90 ? 'var(--bad)' : m.pct >= 75 ? 'var(--warn)' : agent === 'claude' ? 'var(--claude)' : 'var(--codex)';
+    const lvl = m.pct >= 90 ? 'bad' : m.pct >= 75 ? 'warn' : '';
     const err = errOf(agent);
-    return `<span class="meter"><span class="top"><span>${cliName(agent)} <b>${pctTxt(m.pct)}</b> · ${WIN[m.k] || m.k}</span>${err ? `<span class="dot warn" title="${esc(err.error)}"></span><span class="sr-only">last refresh failed</span>` : ''}</span><span class="bar" role="progressbar" aria-label="${cliName(agent)} ${WIN[m.k] || m.k} usage" aria-valuenow="${Math.round(m.pct)}" aria-valuemin="0" aria-valuemax="100"><i style="width:${m.pct}%;background:${col}"></i></span><span class="sub" data-reset="${m.resetsAt || ''}">resets in ${countdown(m.resetsAt)}</span></span>`;
+    summary.push(`${TOOL[agent] || agent} ${pctTxt(m.pct)} of the ${WIN[m.k] || m.k} limit`);
+    return `<span class="quota ${lvl}"><span class="q-name"><span class="long">${TOOL[agent] || cliName(agent)}</span><span class="short">${cliName(agent)}</span></span><span class="meter" aria-hidden="true"><i style="width:${m.pct}%"></i></span><span class="q-pct num">${pctTxt(m.pct)}</span>${err ? '<span class="dot warn" aria-hidden="true"></span>' : ''}<span class="q-reset num" data-reset="${m.resetsAt || ''}">resets in ${countdown(m.resetsAt)}</span></span>`;
   }).join('');
-  const label = groups.length ? `Updated ${groups[0][1][0].updated ? hhmm(groups[0][1][0].updated) : '—'} · all windows` : errs.length ? 'Usage refresh failed — open for details' : 'No usage data yet — open to refresh';
+  const label = groups.length ? `Usage limits: ${summary.join('; ')}. Updated ${groups[0][1][0].updated ? hhmm(groups[0][1][0].updated) : 'unknown'}.${errs.length ? ' Last refresh failed.' : ''} Open for every window.` : errs.length ? 'Usage refresh failed — open for details' : 'No usage data yet — open to refresh';
   // Popover: one section per CLI that has windows or an error; always offers the Claude refresh.
   const agents = [...new Set([...groups.map(([a]) => a), ...errs.map((e) => e.agent)])].sort((a, b) => (a === 'claude' ? 0 : 1) - (b === 'claude' ? 0 : 1));
   const section = (agent, i) => {
     const ws = (groups.find(([a]) => a === agent) || [, []])[1], err = errOf(agent);
-    return `<div class="mpop-h" style="margin-top:${i ? 10 : 0}px">${cliName(agent)}</div>
+    return `<div class="mpop-h eyebrow" style="margin-top:${i ? 12 : 0}px">${TOOL[agent] || cliName(agent)}</div>
       ${ws.map((m) => `<div class="mpop-r"><span>${WIN[m.k] || m.k}</span><b>${pctTxt(m.pct)}</b><span class="sub" data-reset="${m.resetsAt || ''}">resets in ${countdown(m.resetsAt)}</span></div>`).join('')}
-      ${err ? `<div class="mpop-err" role="alert">${icon('alert', 'width:13px;height:13px')}<span><b>Refresh failed${err.at ? ` at ${hhmm(err.at)}` : ''}.</b> ${esc(err.error)}</span></div>` : ''}`;
+      ${err ? `<div class="mpop-err" role="alert">${icon('alert', 14)}<span><b>Refresh failed${err.at ? ` at ${hhmm(err.at)}` : ''}.</b> ${esc(err.error)}</span></div>` : ''}`;
   };
   const pop = !meterPop ? '' : `<div class="mpop" id="mpop" role="group" aria-label="Usage limits">${agents.map(section).join('') || '<div class="hint" style="margin:0">No usage data yet. Claude usage appears after the first agent run or a refresh; Codex usage is read from the newest Codex session.</div>'}
-    <button class="btn sm" id="mProbe">Refresh Claude usage (one Haiku call, under $0.01)</button></div>`;
-  const inner = meters || `<span class="hint" style="margin:0;display:inline-flex;align-items:center;gap:6px">${errs.length ? '<span class="dot warn" aria-hidden="true"></span>Usage refresh failed' : 'Usage appears after the first agent run'}</span>`;
-  $('#meters').innerHTML = `<button class="meter-btn" id="metersBtn" title="${esc(label)}" aria-expanded="${meterPop}" aria-controls="mpop" aria-label="Usage limits${errs.length ? ' (last refresh failed)' : ''}">${inner}</button>${pop}`;
+    <button class="btn" id="mProbe">${icon('refresh', 14)}Refresh Claude usage (one Haiku call)</button></div>`;
+  const inner = meters || `<span class="quota-none">${errs.length ? '<span class="dot warn" aria-hidden="true"></span>Usage refresh failed' : 'Usage'}</span>`;
+  $('#meters').innerHTML = `<button class="meter-btn" id="metersBtn" title="${esc(label)}" aria-expanded="${meterPop}" aria-controls="mpop" aria-label="${esc(label)}">${inner}</button>${pop}`;
   $('#metersBtn').onclick = () => { meterPop = !meterPop; renderMeters(); if (meterPop) $('#mProbe')?.focus(); else $('#metersBtn')?.focus(); };
   $('#mProbe') && ($('#mProbe').onclick = async () => { try { await api('/api/limits/refresh', {}); toast('Refreshing usage…'); } catch {} });
 }
@@ -126,24 +139,56 @@ function budgetWarning() {
   if (!w || !c.updated || Date.now() - new Date(c.updated) > 6 * 3600e3) return null;
   return w.pct >= 80 ? w.pct : null;
 }
-function renderConn() { $('#conn').innerHTML = `<span class="dot ${S.connected ? 'ok' : 'bad'}" aria-hidden="true"></span><span class="txt">${S.connected ? 'Live' : 'Reconnecting'}</span>`; $('#conn').title = S.connected ? 'Live updates connected' : 'Live updates disconnected — reconnecting'; }
+function renderConn() {
+  $('#conn').innerHTML = `<span class="dot ${S.connected ? 'ok' : 'fail'}" aria-hidden="true"></span><span class="txt">${S.connected ? 'Connected' : 'Reconnecting'}</span>${S.connected ? '' : '<span class="sr-only">Live updates disconnected</span>'}`;
+  $('#conn').title = S.connected ? `Live updates connected to ${location.host}` : 'Live updates disconnected — reconnecting';
+}
 
 /* ================= sidebar ================= */
+const DAY = 864e5;
+function dayStart() { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime(); }
+// Right accessory for a finished session: relative today, weekday this week, date before that.
+function whenTxt(iso) {
+  const t = new Date(iso).getTime(), d0 = dayStart();
+  if (t >= d0) return ago(iso);
+  if (t >= d0 - 6 * DAY) return new Date(iso).toLocaleDateString([], { weekday: 'short' });
+  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+function sessionRow(r) {
+  const on = r.id === S.active;
+  const sub = r.kind === 'meeting' ? `Debate · ${(r.seatIds || []).length} agents` : r.kind === 'chain' ? 'Propose → Review' : `Direct · ${esc(S.seats[r.seatId]?.name || 'agent')}`;
+  let acc;
+  if (r.status === 'running') acc = `<span class="srow-acc live" title="Running"><span class="dot run" aria-hidden="true"></span><span class="acc-word">Running</span></span>`;
+  else if (r.status === 'needs-you') acc = `<span class="srow-acc warn" title="Needs you"><span class="dot warn" aria-hidden="true"></span><span class="acc-word">Needs you</span></span>`;
+  else if (r.status === 'error') acc = `<span class="srow-acc failed" title="Failed">${icon('x', 12)}<span class="acc-word">Failed</span></span>`;
+  else if (r.status === 'stopped') acc = `<span class="srow-acc stopped" title="Stopped"><span class="dot hollow" aria-hidden="true"></span><span class="acc-word">Stopped</span></span>`;
+  else acc = `<span class="srow-acc" title="${esc(`${STATUS[r.status] || r.status} · started ${new Date(r.created).toLocaleString()}`)}">${esc(whenTxt(r.created))}<span class="sr-only">, ${esc(STATUS[r.status] || r.status)}</span></span>`;
+  return `<div role="listitem"><button class="srow" data-room="${esc(r.id)}" ${on ? 'aria-current="page"' : ''}>
+    <span class="srow-ico" aria-hidden="true">${icon(kindIcon(r.kind), 14)}</span><span class="srow-title">${esc(r.title)}</span><span class="srow-sub">${sub}</span>${acc}</button></div>`;
+}
 function renderSessions() {
-  const list = Object.values(S.rooms).sort((a, b) => (b.status === 'running') - (a.status === 'running') || b.created.localeCompare(a.created));
-  const TAG = { 'needs-you': 1, error: 1, stopped: 1, passed: 1 };
-  // Each row is a native <button> inside its own role="listitem" wrapper, so it stays exposed as a button.
-  $('#sessions').innerHTML = list.length ? list.map((r) => `<div role="listitem"><button class="row ${r.id === S.active ? 'on' : ''}" data-room="${r.id}" ${r.id === S.active ? 'aria-current="page"' : ''} title="${esc(new Date(r.created).toLocaleString())}">
-      <span class="kind" aria-hidden="true">${icon(kindIcon(r.kind), 'width:14px;height:14px')}</span>
-      <span class="t">${esc(r.title)}<span class="sub">${KIND[r.kind] || r.kind}${r.usage?.tokens ? ' · ' + fmtTok(r.usage.tokens) + ' tok' : ''}</span></span>
-      ${r.status === 'running' ? '<span class="dot live" aria-label="running"></span>' : TAG[r.status] ? `<span class="pill ${r.status}" style="height:18px;padding:0 7px;font-size:10.5px">${STATUS[r.status]}</span>` : `<span class="m">${ago(r.created)}</span>`}</button></div>`).join('')
-    : '<div class="hint" style="padding:4px 8px">No sessions yet</div>';
+  const q = (S.query || '').trim().toLowerCase();
+  const all = Object.values(S.rooms).sort((a, b) => String(b.created).localeCompare(String(a.created)));
+  const list = q ? all.filter((r) => `${r.title} ${r.topic || ''} ${r.task || ''}`.toLowerCase().includes(q)) : all;
+  const d0 = dayStart(), groups = [['Today', []], ['This week', []], ['Earlier', []]];
+  for (const r of list) { const t = new Date(r.created).getTime(); groups[t >= d0 ? 0 : t >= d0 - 6 * DAY ? 1 : 2][1].push(r); }
+  const html = groups.filter(([, rs]) => rs.length).map(([label, rs]) => {
+    const id = 'sg-' + slug(label);
+    return `<section class="group" aria-labelledby="${id}"><h2 class="group-label eyebrow" id="${id}"><span>${label}</span><span class="count">${rs.length}</span></h2><div role="list" aria-labelledby="${id}">${rs.map(sessionRow).join('')}</div></section>`;
+  }).join('');
+  $('#sessions').innerHTML = html || `<div class="group"><div class="side-empty">${q ? 'No matching sessions' : 'No sessions yet'}</div></div>`;
   $$('#sessions [data-room]').forEach((el) => el.onclick = () => openRoom(el.dataset.room));
 }
 function renderAgents() {
-  $('#agents').innerHTML = S.order.map((id) => { const s = S.seats[id]; return `<div role="listitem"><button class="row" data-seat="${id}" title="${esc([`Effort: ${EFFORT[s.effort] || s.effort}`, s.activity].filter(Boolean).join(' · '))}">
-      ${avatar(id)}<span class="t">${esc(s.name)}<span class="sub">${s.status === 'working' ? `<span style="color:var(--warn)">${esc(s.activity || 'working')}…</span>` : s.status === 'error' ? `<span style="color:var(--bad)">error</span>` : esc([s.role, s.model].filter(Boolean).join(' · '))}</span></span>
-      <span class="dot ${s.status === 'working' ? 'live' : s.status === 'error' ? 'bad' : ''}" aria-hidden="true"></span></button></div>`; }).join('') || '<div class="hint" style="padding:4px 8px">No agents — add one with +</div>';
+  const running = S.order.filter((id) => S.seats[id]?.status === 'working').length;
+  $('#agentsCount').textContent = running ? `${running} running` : S.order.length ? String(S.order.length) : '';
+  $('#agents').innerHTML = S.order.map((id) => {
+    const s = S.seats[id];
+    const st = s.status === 'working' ? `<span class="state"><span class="dot run" aria-hidden="true"></span><span class="acc-word">Running</span></span>`
+      : s.status === 'error' ? `<span class="state failed">${icon('x', 12)}<span class="acc-word">Failed</span></span>` : '';
+    const tip = [s.role, `Effort: ${EFFORT[s.effort] || s.effort}`, s.activity].filter(Boolean).join(' · ');
+    return `<div role="listitem"><button class="arow" data-seat="${esc(id)}" title="${esc(tip)}">${avatar(id)}<span class="arow-text"><span class="arow-name">${esc(s.name)}</span><span class="arow-sub">${esc(TOOL[s.agent] || s.agent)} · ${esc(s.model || 'default')}</span></span>${st}</button></div>`;
+  }).join('') || '<div class="side-empty">No agents — add one with +</div>';
   $$('#agents [data-seat]').forEach((el) => el.onclick = () => openAgent(el.dataset.seat));
 }
 
@@ -232,7 +277,7 @@ async function runDoctor() {
   const n = doctorProblems().length;
   if (S.doctor.at && !S.doctor.loading) announce(S.doctor.error ? 'Setup check failed to run' : n ? `Setup check: ${n} problem${n === 1 ? '' : 's'} found` : 'Setup check passed');
 }
-const cmdRow = (cmd, note = '') => `<div class="cmd"><code>${esc(cmd)}</code>${note ? `<span class="hint" style="margin:0;flex:none">${esc(note)}</span>` : ''}<button class="btn sm" data-copy="${esc(cmd)}" data-copy-msg="Command copied" aria-label="Copy command: ${esc(cmd)}">${icon('copy', 'width:13px;height:13px')}Copy</button></div>`;
+const cmdRow = (cmd, note = '') => `<div class="cmd"><code>${esc(cmd)}</code>${note ? `<span class="hint" style="margin:0;flex:none">${esc(note)}</span>` : ''}<button class="btn sm" data-copy="${esc(cmd)}" data-copy-msg="Command copied" aria-label="Copy command: ${esc(cmd)}">${icon('copy', 12)}Copy</button></div>`;
 const stateTxt = (c) => c.st === 'ok' ? 'OK' : c.skipped ? 'Skipped' : c.blocking && !isBlocking(c) ? 'Optional' : c.st === 'fail' ? (/not found|not installed|does not exist/i.test(c.detail) ? 'Missing' : 'Failed') : c.blocking ? 'Blocked' : 'Check';
 function checkRow(c) {
   const blocking = isBlocking(c), optional = c.blocking && !blocking, st = optional ? 'warn' : c.st;
@@ -242,28 +287,28 @@ function checkRow(c) {
   const who = !users ? '' : users.length
     ? `<div class="hint" style="color:var(--text-2)">Used by ${users.map((s) => esc(s.name)).join(', ')}. To go on without ${cliName(c.cli)}, switch ${users.length === 1 ? 'that agent' : 'those agents'} to the other runtime (open the agent and change Runtime) or delete ${users.length === 1 ? 'it' : 'them'}.</div>`
     : `<div class="hint" style="color:var(--text-2)">No agent uses the ${cliName(c.cli)} CLI, so this does not block you. Install it when you add a ${cliName(c.cli)} agent.</div>`;
-  return `<div class="check ${st} ${blocking ? 'blocking' : ''}" role="listitem"><span class="check-ic">${icon(ic, 'width:13px;height:13px')}</span>
+  return `<div class="check ${st} ${blocking ? 'blocking' : ''}" role="listitem"><span class="check-ic">${icon(ic, 12)}</span>
     <div class="check-b"><b>${esc(c.name)}</b>${c.detail ? `<div class="hint">${esc(c.detail)}</div>` : ''}${who}${c.hint ? `<div class="hint" style="color:var(--text-2)">${esc(c.hint)}</div>` : ''}${c.fix ? cmdRow(c.fix, c.fixNote) : ''}${c.url ? `<div class="hint"><a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.url.replace(/^https?:\/\//, ''))}</a></div>` : ''}</div>
-    <span class="state">${stateTxt(c)}</span></div>`;
+    <span class="check-state">${stateTxt(c)}</span></div>`;
 }
 const stepHint = (t) => t ? `<div class="hint" style="color:var(--text-2)">${esc(t)}</div>` : '';
-const genericSteps = () => `<div class="steps" role="list">
-    <div class="step" role="listitem"><b>1. Claude CLI</b>${cmdRow(FIX.claudeInstall, FIX_NOTE.claudeInstall)}${stepHint(FIX_HINT.claudeInstall)}${cmdRow(FIX.claudeLogin, FIX_NOTE.claudeLogin)}</div>
-    <div class="step" role="listitem"><b>2. Codex CLI</b>${FIX.codexInstall ? cmdRow(FIX.codexInstall) : ''}${stepHint(FIX_HINT.codexInstall)}${isWin ? `<div class="hint"><a href="${FIX_URL.codexInstall}" target="_blank" rel="noopener noreferrer">github.com/openai/codex/releases</a></div>` : ''}${cmdRow(FIX.codexLogin, FIX_NOTE.codexLogin)}</div>
+const genericSteps = () => `<div class="setup-steps" role="list">
+    <div class="setup-step" role="listitem"><b>1. Claude CLI</b>${cmdRow(FIX.claudeInstall, FIX_NOTE.claudeInstall)}${stepHint(FIX_HINT.claudeInstall)}${cmdRow(FIX.claudeLogin, FIX_NOTE.claudeLogin)}</div>
+    <div class="setup-step" role="listitem"><b>2. Codex CLI</b>${FIX.codexInstall ? cmdRow(FIX.codexInstall) : ''}${stepHint(FIX_HINT.codexInstall)}${isWin ? `<div class="hint"><a href="${FIX_URL.codexInstall}" target="_blank" rel="noopener noreferrer">github.com/openai/codex/releases</a></div>` : ''}${cmdRow(FIX.codexLogin, FIX_NOTE.codexLogin)}</div>
     <div class="hint">Run these in ${isWin ? 'PowerShell' : 'a terminal'}, then re-check. One CLI is enough if every agent uses it. Both use your own plan quota; the board never calls an API directly.</div></div>`;
 function setupHtml(firstRun) {
   const d = S.doctor, problems = doctorProblems();
   const head = firstRun
-    ? `<h2 id="setupTitle">Welcome — let's check your setup</h2><p class="lead">Orchestra Board drives the Claude and Codex CLIs installed on this machine. Each CLI your agents use must be installed and signed in; one of the two is enough if all your agents use it.</p>`
+    ? `<h2 id="setupTitle">Welcome — let's check your setup</h2><p class="lead">${APP} drives the Claude Code and Codex CLIs installed on this machine. Each CLI your agents use must be installed and signed in; one of the two is enough if all your agents use it.</p>`
     : `<h2 id="setupTitle">Setup check</h2>`;
   let body;
   if (!d || d.loading && !d.checks.length) body = '<div class="hint" style="margin:10px 0">Checking the environment…</div>';
-  else if (d.error) body = `<div class="check fail"><span class="check-ic">${icon('x', 'width:13px;height:13px')}</span><div class="check-b"><b>Could not run the check</b><div class="hint">${esc(d.error)}</div></div></div><p class="hint">What a working setup needs:</p>${genericSteps()}`;
+  else if (d.error) body = `<div class="checks"><div class="check fail"><span class="check-ic">${icon('x', 12)}</span><div class="check-b"><b>Could not run the check</b><div class="hint">${esc(d.error)}</div></div><span class="check-state">Failed</span></div></div><p class="hint">What a working setup needs:</p>${genericSteps()}`;
   else if (!d.checks.length) body = `<p class="hint" style="margin-top:8px">The environment check reported no results, so nothing could be verified automatically. Make sure both CLIs are installed and signed in:</p>${genericSteps()}`;
-  else body = `<div class="checks" role="list">${d.checks.map(checkRow).join('')}</div>${problems.length ? `<p class="hint">Fix the items marked <b>Missing</b>, <b>Failed</b> or <b>Blocked</b>, then re-check. Agents on a CLI the board cannot launch fail on every turn.</p>` : `<div class="ok-line">${icon('check')}Everything looks good — start a session below.</div>`}`;
+  else body = `<div class="checks" role="list">${d.checks.map(checkRow).join('')}</div>${problems.length ? `<p class="hint">Fix the items marked <b>Missing</b>, <b>Failed</b> or <b>Blocked</b>, then re-check. Agents on a CLI the board cannot launch fail on every turn.</p>` : `<div class="ok-line">${icon('check', 14)}Everything looks good — start a session below.</div>`}`;
   return `<section class="setup" aria-labelledby="setupTitle" aria-busy="${!!d?.loading}">${head}${body}
-    <div class="setup-f"><button class="btn sm" id="setupRecheck" ${d?.loading ? 'disabled' : ''}>${icon('refresh', 'width:13px;height:13px')}${d?.loading ? 'Checking…' : 'Re-check'}</button>
-      ${problems.length ? '' : '<button class="btn sm ghost" id="setupHide">Hide</button>'}
+    <div class="setup-f"><button class="btn" id="setupRecheck" ${d?.loading ? 'disabled' : ''}>${icon('refresh', 14)}${d?.loading ? 'Checking…' : 'Re-check'}</button>
+      ${problems.length ? '' : '<button class="btn ghost" id="setupHide">Hide</button>'}
       ${d?.at ? `<span class="hint">Checked ${hhmm(d.at)}</span>` : ''}</div></section>`;
 }
 function bindSetup() {
@@ -292,7 +337,7 @@ function renderSetup() {
 function renderBanner() {
   const slot = $('#bannerSlot'); if (!slot) return;
   const warn = budgetWarning();
-  slot.innerHTML = warn ? `<div class="banner" role="status">${icon('alert')}<span><b>Claude weekly usage is at ${warn.toFixed(0)}%.</b> Consider Codex agents for heavy work.</span></div>` : '';
+  slot.innerHTML = warn ? `<div class="banner" role="status">${icon('alert', 14)}<span><b>Claude weekly usage is at ${warn.toFixed(0)}%.</b> Consider Codex agents for heavy work.</span></div>` : '';
 }
 
 /* ================= main: home ================= */
@@ -308,18 +353,18 @@ function renderHome() {
   // The permission line reflects the seats as configured (write is opt-in via .orchestra/seats.json, see the agent editor).
   const writers = seats.filter((s) => s.perm === 'write');
   const permTxt = writers.length ? `${esc(writers.map((s) => s.name).join(', '))} ${writers.length === 1 ? 'has' : 'have'} write permission and can edit files; the other agents only read.` : 'Agents can read your project but never edit it.';
-  $('#main').innerHTML = `<div id="bannerSlot"></div>
+  $('#main').innerHTML = `<div class="home-scroll"><div id="bannerSlot"></div>
     <div class="home">
       ${showSetup ? setupHtml(firstRun) : ''}
-      <h2 id="homeTitle">Start a session</h2><p class="lead">Agents are Claude or Codex CLI runs with a role. Every turn uses your plan quota. ${permTxt}</p>
+      <h2 id="homeTitle">Start a session</h2><p class="lead">Agents are Claude Code or Codex CLI runs with a role. Every turn uses your plan quota. ${permTxt}</p>
       <div class="tpls">
-        <button class="tpl" data-tpl="meeting"><span class="ic">${icon('users')}</span><b>Debate</b><span>A scout reads the code once, agents give independent ideas, discuss, and a facilitator writes the synthesis.</span></button>
-        <button class="tpl" data-tpl="chain"><span class="ic">${icon('loop')}</span><b>Propose → Review</b><span>One agent proposes a change, another reviews it with a PASS/FAIL verdict, looping until it passes.</span></button>
+        <button class="tpl" data-tpl="meeting"><span class="ic">${icon('debate')}</span><b>Debate</b><span>A scout reads the code once, agents give independent ideas, discuss, and a facilitator writes the synthesis.</span></button>
+        <button class="tpl" data-tpl="chain"><span class="ic">${icon('review')}</span><b>Propose → Review</b><span>One agent proposes a change, another reviews it with a PASS/FAIL verdict, looping until it passes.</span></button>
         <button class="tpl" data-tpl="dm"><span class="ic">${icon('chat')}</span><b>Direct chat</b><span>A direct conversation with a single agent that remembers previous messages.</span></button>
       </div>
-      <div class="foot-hint">${tok || cost ? `<span class="hint" style="margin:0">This project so far: ${fmtTok(tok)} tokens · $${cost.toFixed(2)} Claude</span>` : ''}
-        ${showSetup ? '' : `<button class="btn link" id="setupOpen" style="font-size:12px">Check setup</button>`}<button class="btn link" id="helpOpen" style="font-size:12px">Shortcuts <kbd>?</kbd></button></div>
-    </div>`;
+      <div class="foot-hint">${tok || cost ? `<span class="num">This project so far: ${fmtTok(tok)} tokens · ${fmtCost(cost)} Claude</span>` : ''}
+        ${showSetup ? '' : '<button class="btn link" id="setupOpen">Check setup</button>'}<button class="btn link" id="helpOpen">Shortcuts</button></div>
+    </div></div>`;
   renderBanner();
   $$('#main [data-tpl]').forEach((b) => b.onclick = () => openNew(b.dataset.tpl, null, 'template'));
   bindSetup();
@@ -332,32 +377,38 @@ function renderHome() {
 function renderRoom() {
   const r = S.rooms[S.active];
   if (!r) { $('#main').innerHTML = '<div class="empty" role="status">Starting session…</div>'; return; }
-  $('#main').innerHTML = `<div class="head"></div><div class="resultbar" id="resultBar" hidden></div>
-    <div class="feed" id="feed" aria-label="Transcript"><div class="feed-inner" id="feedInner"></div></div>
-    <div class="composer" id="composerArea"></div>`;
+  $('#main').innerHTML = `<div class="main-head"></div><div class="resultbar" id="resultBar" hidden></div>
+    <div class="transcript" id="feed" role="region" aria-label="Transcript" tabindex="-1"><div class="thread" id="feedInner"></div></div>
+    <div class="composer-wrap" id="composerArea"></div>`;
   renderRoomHead(); renderResultBar(); renderComposer();
   r.messages.forEach((m) => paintMsg(m, false));
-  if (!r.messages.length) $('#feedInner').innerHTML = '<div class="empty">No messages yet.</div>';
-  const f = $('#feed'); f.scrollTop = f.scrollHeight;
+  if (!r.messages.length) $('#feedInner').innerHTML = '<div class="thread-empty">No messages yet.</div>';
+  decorate();
+  // A running session opens at the latest turn (to follow it); a finished one opens at the top (the result bar jumps).
+  const f = $('#feed'); f.scrollTop = r.status === 'running' ? f.scrollHeight : 0;
 }
-// Repaints only the header: title, pills, Stop, Run again, Export, Delete.
+// Elapsed time: ticking while running, else first message to the last finished turn.
+function roomEnd(r) { let end = 0; for (const m of r.messages) { const t = new Date(m.ended || m.ts).getTime(); if (t > end) end = t; } return end || new Date(r.created).getTime(); }
+// Repaints only the header: title, status, mode, round, elapsed, Stop, Export, Delete.
 function renderRoomHead() {
-  const r = S.rooms[S.active], h = $('#main .head'); if (!r || !h) return;
+  const r = S.rooms[S.active], h = $('#main .main-head'); if (!r || !h) return;
   const total = r.kind === 'meeting' ? r.rounds : r.kind === 'chain' ? r.maxRounds : null;
-  const roundTxt = total ? (typeof r.round === 'number' ? `${roundLabel(r.round)} of ${total}` : roundLabel(r.round)) : '';
   const live = r.status === 'running', dm = r.kind === 'dm';
+  // The current round only while running; a finished session's rounds are in the transcript and the workflow panel.
+  const roundTxt = !live || !total ? '' : typeof r.round === 'number' && r.round > 0 ? `${roundLabel(r.round)} of ${total}` : roundLabel(r.round);
   const ready = dm && !live && r.status !== 'error';
-  const statusTxt = dm ? (live ? 'Replying' : ready ? 'Ready' : STATUS[r.status] || r.status) : STATUS[r.status] || r.status;
-  h.innerHTML = `
-      <div class="kind" aria-hidden="true">${icon(kindIcon(r.kind), 'width:14px;height:14px')}</div>
-      <h1 title="${esc(r.topic || r.task || r.title)}">${esc(r.title)}</h1>
-      <span class="pill">${KIND[r.kind] || r.kind}</span>${roundTxt ? `<span class="pill">${esc(roundTxt)}</span>` : ''}<span class="pill ${ready ? 'idle' : r.status}" role="status">${live ? '<span class="dot live" aria-hidden="true"></span>' : ''}${esc(statusTxt)}</span>
-      ${live ? `<button class="btn sm danger" id="stopRoom">${icon('stop', 'width:13px;height:13px')}Stop</button>` : ''}
-      ${!live && !dm ? '<button class="btn sm" id="againRoom">Run again</button>' : ''}
-      ${r.messages.length ? `<button class="btn sm ghost icon" id="exportRoom" title="Export transcript (.md)" aria-label="Export transcript as Markdown">${icon('download', 'width:14px;height:14px')}</button>` : ''}
-      <button class="btn sm ghost icon" id="delRoom" title="Delete session" aria-label="Delete session">${icon('trash', 'width:14px;height:14px')}</button>`;
+  const status = dm ? (live ? statusHtml('running', 'Replying') : ready ? statusHtml('idle', 'Ready') : statusHtml(r.status)) : statusHtml(r.status);
+  const sep = '<span class="sep" aria-hidden="true">·</span>';
+  const elapsed = live ? `<span class="num" title="Started ${esc(hhmm(r.created))}" data-since="${esc(r.created)}">${fmtDur(Date.now() - new Date(r.created))}</span>`
+    : r.messages.length ? `<span class="num" title="Started ${esc(hhmm(r.created))}">${fmtDur(roomEnd(r) - new Date(r.created))}</span>` : '';
+  h.innerHTML = `<h1 title="${esc(r.topic || r.task || r.title)}">${esc(r.title)}</h1>
+    <div class="mh-meta"><span role="status">${status}</span>${sep}<span class="mode">${icon(kindIcon(r.kind), 12)}${KIND[r.kind] || esc(r.kind)}</span>${roundTxt ? `${sep}<span>${esc(roundTxt)}</span>` : ''}${elapsed ? sep + elapsed : ''}</div>
+    <div class="mh-actions">
+      ${live ? `<button class="btn danger" id="stopRoom" title="Stop the run and kill the running CLI">${icon('stop', 12)}Stop</button>` : ''}
+      ${r.messages.length ? `<button class="icon-btn" id="exportRoom" title="Export transcript (.md)" aria-label="Export transcript as Markdown">${icon('download')}</button>` : ''}
+      <button class="icon-btn danger" id="delRoom" title="Delete session" aria-label="Delete session">${icon('trash')}</button>
+    </div>`;
   $('#stopRoom') && ($('#stopRoom').onclick = () => api(`/api/rooms/${r.id}/stop`, {}).catch(() => {}));
-  $('#againRoom') && ($('#againRoom').onclick = () => openNew(r.kind, roomPreset(r)));
   $('#exportRoom') && ($('#exportRoom').onclick = () => exportTranscript(r));
   $('#delRoom').onclick = () => { if (confirm('Delete this session and its transcript?')) api(`/api/rooms/${r.id}/delete`, {}).catch(() => {}); };
 }
@@ -375,7 +426,7 @@ function resultInfo(r) {
     else { title = 'Debate finished'; sub = 'No facilitator was set, so there is no synthesis. Export the transcript, or run again with a facilitator.'; }
   } else {
     const rev = esc(name(r.reviewerId)), bld = esc(name(r.builderId));
-    const failed = [...r.messages].reverse().find((m) => m.seatId !== 'system' && m.seatId !== 'user' && m.error);
+    const failed = [...r.messages].reverse().find((m) => isAgentMsg(m) && m.error);
     if (r.status === 'passed') { title = `Passed review${typeof res?.round === 'number' ? ` in round ${res.round}` : ''}`; sub = `${rev} approved ${bld}'s proposal. The verdict is the result.`; }
     else if (failed && !res) { title = 'Needs your decision'; sub = `${esc(failed.name)}'s turn failed: ${esc(failed.error)}`; }
     else { title = 'Needs your decision'; sub = `Round limit reached without a PASS from ${rev}. Read the last review, then run again or continue in Direct chat.`; }
@@ -388,12 +439,10 @@ function renderResultBar() {
   if (!info) { el.hidden = true; el.innerHTML = ''; return; }
   el.hidden = false; el.className = `resultbar ${r.status}`; el.setAttribute('role', 'region'); el.setAttribute('aria-label', 'Result');
   const ic = r.status === 'passed' || r.status === 'done' ? 'check' : r.status === 'stopped' ? 'stop' : 'alert';
-  el.innerHTML = `<span class="rb-ic">${icon(ic)}</span><div class="rb-t"><b>${info.title}</b><span>${info.sub}</span></div>
-    <div class="rb-a">${info.res ? `<button class="btn sm primary" id="rbJump">${icon('target', 'width:13px;height:13px')}Jump to ${r.kind === 'chain' ? 'verdict' : 'synthesis'}</button><button class="btn sm" id="rbCopy">${icon('copy', 'width:13px;height:13px')}Copy as Markdown</button>` : ''}
-      <button class="btn sm" id="rbExport">${icon('download', 'width:13px;height:13px')}Export transcript</button></div>`;
+  el.innerHTML = `<span class="rb-ic">${icon(ic, 14)}</span><div class="rb-t"><b>${info.title}</b><span>${info.sub}</span></div>
+    ${info.res ? `<div class="rb-a"><button class="btn" id="rbJump">${icon('target', 14)}Jump to ${r.kind === 'chain' ? 'verdict' : 'synthesis'}</button><button class="btn" id="rbCopy">${icon('copy', 14)}Copy as Markdown</button></div>` : ''}`;
   $('#rbJump') && ($('#rbJump').onclick = () => jumpTo(info.res.id));
   $('#rbCopy') && ($('#rbCopy').onclick = () => copyText(resultMd(r, info.res), 'Result copied as Markdown'));
-  $('#rbExport').onclick = () => exportTranscript(r);
 }
 const cleanText = (t) => (t || '').replace(/\n?\s*\**STANCE:\s*\w+\**\s*$/i, '').replace(/\n?\s*\**VERDICT:\s*\w+\**\s*$/i, '').trim();
 function resultMd(r, m) {
@@ -411,7 +460,7 @@ function transcriptMd(r) {
   let lastRound;
   for (const m of r.messages) {
     if (m.seatId === 'system') { L.push('', `> _${m.text}_`); continue; }
-    if (m.seatId !== 'system' && m.seatId !== 'user' && m.round !== undefined && String(m.round) !== String(lastRound)) { lastRound = m.round; L.push('', `## ${roundLabel(m.round)}`); }
+    if (isAgentMsg(m) && m.round !== undefined && String(m.round) !== String(lastRound)) { lastRound = m.round; L.push('', `## ${roundLabel(m.round)}`); }
     const who = m.seatId === 'user' ? 'You' : m.name;
     const meta = [m.label, hhmm(m.ts), m.tokens ? `${m.tokens} tokens` : '', m.verdict ? `VERDICT: ${m.verdict.toUpperCase()}` : '', m.id === r.resultId ? (r.kind === 'chain' ? 'RESULT' : 'SYNTHESIS') : ''].filter(Boolean).join(' · ');
     L.push('', `### ${who}${meta ? ` — ${meta}` : ''}`, '', m.streaming ? '_(still writing)_' : (m.text || (m.error ? '' : '_(no text)_')));
@@ -429,32 +478,35 @@ function renderComposer() {
   const r = S.rooms[S.active], el = $('#composerArea'); if (!r || !el) return;
   const mode = composerMode(r); el.dataset.mode = mode;
   if (mode === 'done') {
-    el.innerHTML = `<div class="nextbar"><span>Session finished</span><button class="btn sm" id="nbAgain">Run again</button><button class="btn sm primary" id="nbDm">Continue in Direct chat</button></div>`;
+    el.innerHTML = `<div class="nextbar"><span>Session finished</span><button class="btn" id="nbAgain">Run again</button><button class="btn primary" id="nbDm">Continue in Direct chat</button></div>`;
     $('#nbAgain').onclick = () => openNew(r.kind, roomPreset(r));
     $('#nbDm').onclick = () => continueInDm(r);
     return;
   }
   const draft = $('#compose')?.value || ''; // keep what the user is typing across re-renders
-  const placeholder = mode === 'dm' ? `Message ${S.seats[r.seatId]?.name || 'agent'}…` : 'Add a note — the next agent turn will read it…';
-  el.innerHTML = `<div class="composer-inner">
-      <textarea class="input" id="compose" rows="1" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"></textarea>
-      <button class="btn primary icon" id="sendBtn" aria-label="Send" style="height:38px;width:38px">${icon('send')}</button>
-    </div><div class="hint">${mode === 'dm' ? `<kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line · <kbd>/</kbd> focuses this box` : 'Interject: your note goes to the next agent turn.'}</div>`;
+  const placeholder = mode === 'dm' ? `Message ${S.seats[r.seatId]?.name || 'agent'}…` : 'Add a note for the next agent turn…';
+  el.innerHTML = `<div class="composer">
+      <textarea id="compose" rows="1" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" aria-describedby="composeKeys"></textarea>
+      <div class="composer-tools"><span class="send-hint" aria-hidden="true"><kbd>Enter</kbd></span><span class="sr-only" id="composeKeys">Enter sends, Shift+Enter adds a new line.</span><button class="btn primary" id="sendBtn">Send</button></div>
+    </div>`;
   const ta = $('#compose');
-  if (draft) { ta.value = draft; ta.focus(); }
-  ta.oninput = () => { ta.style.height = '38px'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; };
+  if (draft) { ta.value = draft; ta.focus(); grow(ta); }
+  ta.oninput = () => grow(ta);
   // An IME (Japanese, Chinese, Korean) confirms a candidate with Enter: never send a half-composed message.
   ta.onkeydown = (e) => { if (e.isComposing || e.keyCode === 229) return; if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
   $('#sendBtn').onclick = send;
 }
+function grow(ta) { ta.style.height = '28px'; ta.style.height = Math.min(160, ta.scrollHeight) + 'px'; }
 function markResult() {
   const r = S.rooms[S.active];
-  $$('#feedInner .msg.result').forEach((el) => { if (el.dataset.id !== r?.resultId) { el.classList.remove('result'); const m = findMsg(el.dataset.id); if (m) paintMsg(m, false); } });
+  $$('#feedInner .entry.result').forEach((el) => { if (el.dataset.id !== r?.resultId) { el.classList.remove('result'); const m = findMsg(el.dataset.id); if (m) paintMsg(m, false); } });
   if (r?.resultId) { const m = findMsg(r.resultId); if (m) paintMsg(m, false); }
 }
+// The jump target keeps a static highlight (no flash animation) until the next jump.
 function jumpTo(id) {
-  const t = document.querySelector(`#feedInner [data-id="${id}"]`); if (!t) return;
-  t.scrollIntoView({ block: 'center' }); t.classList.remove('flash'); void t.offsetWidth; t.classList.add('flash');
+  const t = document.querySelector(`#feedInner [data-id="${CSS.escape(id)}"]`); if (!t) return;
+  $$('#feedInner .target').forEach((x) => x.classList.remove('target'));
+  t.scrollIntoView({ block: 'center' }); t.classList.add('target');
   t.setAttribute('tabindex', '-1'); t.focus({ preventScroll: true });
 }
 function roomPreset(r) {
@@ -464,7 +516,7 @@ function roomPreset(r) {
 }
 function continueInDm(r) {
   const seatId = r.synthId || r.builderId || r.seatIds?.[0];
-  const res = (r.resultId && r.messages.find((m) => m.id === r.resultId)) || [...r.messages].reverse().find((m) => m.seatId !== 'system' && m.seatId !== 'user' && !m.streaming && m.text);
+  const res = (r.resultId && r.messages.find((m) => m.id === r.resultId)) || [...r.messages].reverse().find((m) => isAgentMsg(m) && !m.streaming && m.text);
   const body = (res?.text || '').trim().slice(0, 1500);
   openNew('dm', { seatId, message: `About: ${r.topic || r.task || r.title}\n\nResult so far:\n${body}\n\n` });
 }
@@ -475,51 +527,68 @@ async function send() {
   try {
     if (r.kind === 'dm') await api(`/api/seats/${r.seatId}/send`, { text });
     else { await api(`/api/rooms/${r.id}/say`, { text }); toast('Note added — the next agent turn will read it'); }
-    const cur = $('#compose'); if (cur && cur.value.trim() === text) { cur.value = ''; cur.style.height = '38px'; }
+    const cur = $('#compose'); if (cur && cur.value.trim() === text) { cur.value = ''; grow(cur); }
   } catch {} finally { const b = $('#sendBtn'); if (b) b.disabled = false; }
 }
 
+/* ---------- transcript: a vertical timeline (round markers, round avatars, verdict blocks) ---------- */
 const tw = {}; // streaming text buffers: msg id -> { shown, pending }
+// Which round a timeline item belongs to (verdict placement); system notes carry it in skip / earlyStop / seatOut.
+const itemRound = (m) => m.skip ? m.skip.round : m.seatOut ? m.seatOut.round : m.earlyStop ?? m.round;
+const roundTitle = (r, key) => r.kind === 'meeting' ? (key === '1' ? 'Round 1 · Ideas' : /^\d+$/.test(key) ? `Round ${key} · Discussion` : cap(key)) : /^\d+$/.test(key) ? `Round ${key}` : cap(key);
+// A round marker sits before the first agent turn of each numbered round (and the synthesis); none for the scout brief or Direct chat.
+const wantsMarker = (r, m) => r.kind !== 'dm' && isAgentMsg(m) && m.round !== undefined && m.round !== 'scout' && m.round !== 0 && m.round !== '';
 function msgHtml(m) {
-  if (m.seatId === 'system') return `<div class="sysline" data-id="${m.id}" role="note">${esc(m.text)}</div>`;
-  const isUser = m.seatId === 'user';
-  return `<article class="msg ${isUser ? 'user' : ''}" data-id="${m.id}" style="--c:${isUser ? 'var(--text-2)' : m.color || seatColor(m.seatId)}">
-    ${isUser ? '<div class="av" aria-hidden="true">Y</div>' : `<div class="av" style="--c:${m.color || seatColor(m.seatId)}" aria-hidden="true">${initials(m.name)}</div>`}
-    <div class="body"><div class="meta"></div><div class="content"></div><div class="tools" aria-label="Tool calls"></div><div class="foot"></div></div></article>`;
+  const rd = itemRound(m), rattr = rd !== undefined && rd !== null ? ` data-round="${esc(String(rd))}"` : '';
+  if (m.seatId === 'system') return `<div class="note" data-id="${esc(m.id)}"${rattr} role="note"><span class="note-node" aria-hidden="true"></span><span class="note-text">${esc(m.text)}</span></div>`;
+  const user = m.seatId === 'user';
+  return `<article class="entry ${user ? 'user' : ''} ${m.round === 'scout' ? 'scout' : ''}" data-id="${esc(m.id)}"${rattr} aria-label="${esc(user ? 'You' : m.name)}">
+    ${user ? userAvatar('lg') : avatar(m.seatId, 'lg', m.agent)}<div class="entry-body"><header class="msg-head"></header><div class="content md"></div><div class="tools" aria-label="Tool calls"></div></div></article>`;
+}
+function msgHeadHtml(m, r) {
+  if (m.seatId === 'user') return `<span class="who"><span class="name">You</span></span><span class="msg-stat">${hhmm(m.ts)}</span>`;
+  const s = S.seats[m.seatId], agent = m.agent || s?.agent, isResult = m.id === r.resultId;
+  const who = `<span class="who"><span class="cli">${esc(TOOL[agent] || 'Agent')}</span><span class="sep" aria-hidden="true">·</span><span class="name">${esc(m.name)}</span></span>`;
+  const model = s?.model && s.agent === agent ? `<span class="model">${esc(s.model)}</span>` : '';
+  // In a Debate the round marker already names the step (Ideas, Discussion, Synthesis); only the scout brief keeps its label.
+  const role = m.label && !(r.kind === 'meeting' && m.round !== 'scout') ? `<span class="role">${esc(cap(m.label))}</span>` : '';
+  const verdict = m.verdict ? `<span class="vt ${m.verdict === 'pass' ? 'pass' : 'fail'}">${icon(m.verdict === 'pass' ? 'check' : 'x', 12)}${m.verdict === 'pass' ? 'PASS' : 'FAIL'}</span>` : '';
+  const resTag = isResult ? `<span class="rtag">${r.kind === 'chain' ? 'Result' : 'Synthesis'}</span>` : '';
+  let stat;
+  if (m.streaming) stat = `<span class="msg-stat act" title="${esc(s?.activity || '')}">${esc(s?.activity || 'starting')}…</span>`;
+  else {
+    const parts = [m.tokens ? `${fmtTok(m.tokens)} tok` : '', m.ended ? fmtDur(new Date(m.ended) - new Date(m.ts)) : ''].filter(Boolean);
+    const tip = [`Finished ${hhmm(m.ended || m.ts)}`, m.cached ? `${fmtTok(m.cached)} cached` : '', m.cost ? '$' + m.cost.toFixed(3) : '', m.effort ? (EFFORT[m.effort] || m.effort) + ' effort' : '', m.tools === 'none' ? 'no tools' : ''].filter(Boolean).join(' · ');
+    stat = `<span class="msg-stat" title="${esc(tip)}">${parts.join(' · ') || hhmm(m.ts)}</span>`;
+  }
+  const acts = !m.streaming && m.text ? `<span class="mact"><button class="icon-btn" data-copy-msg="${isResult ? 'Result copied as Markdown' : 'Message copied'}" data-copy="${esc(isResult ? resultMd(r, m) : cleanText(m.text))}" title="Copy as Markdown" aria-label="Copy ${esc(m.name)}'s message as Markdown">${icon('copy', 14)}</button></span>` : '';
+  return `${who}${model}${role}${verdict}${resTag}${stat}${acts}`;
 }
 function paintMsg(m, scroll = true) {
   const inner = $('#feedInner'), r = S.rooms[S.active]; if (!inner || !r?.messages.some((x) => x.id === m.id)) return;
-  inner.querySelector('.empty')?.remove();
-  let el = inner.querySelector(`[data-id="${m.id}"]`);
+  inner.querySelector('.thread-empty')?.remove();
+  let el = inner.querySelector(`[data-id="${CSS.escape(m.id)}"]`);
   const f = $('#feed'), near = f.scrollHeight - f.scrollTop - f.clientHeight < 140;
   if (!el) {
-    const msgs = r.messages, i = msgs.findIndex((x) => x.id === m.id), prev = msgs.slice(0, i).reverse().find((x) => x.seatId !== 'system' && x.seatId !== 'user');
-    if (m.seatId !== 'system' && m.seatId !== 'user' && m.round !== undefined && (!prev || String(prev.round) !== String(m.round))) {
-      inner.insertAdjacentHTML('beforeend', `<div class="sysline" role="separator" aria-label="${esc(roundLabel(m.round))}">${esc(roundLabel(m.round))}</div>`);
+    const msgs = r.messages, i = msgs.findIndex((x) => x.id === m.id), prev = msgs.slice(0, i).reverse().find(isAgentMsg);
+    if (wantsMarker(r, m) && (!prev || String(prev.round) !== String(m.round)) && !inner.querySelector(`.round[data-round="${CSS.escape(String(m.round))}"]`)) {
+      const key = String(m.round);
+      inner.insertAdjacentHTML('beforeend', `<div class="round running" data-round="${esc(key)}" role="separator" aria-label="${esc(roundTitle(r, key))}"><span class="round-node" aria-hidden="true"><span class="dot run"></span></span><div class="round-text"><b>${esc(roundTitle(r, key))}</b><span class="desc"></span><span class="line" aria-hidden="true"></span></div></div>`);
     }
     inner.insertAdjacentHTML('beforeend', msgHtml(m)); el = inner.lastElementChild;
   }
-  if (m.seatId === 'system') return;
+  if (m.seatId === 'system') { if (scroll) decorateSoon(); return; }
   const isResult = m.id === r.resultId;
   el.classList.toggle('streaming', !!m.streaming);
   el.classList.toggle('result', isResult);
-  const s = S.seats[m.seatId];
-  if (m.seatId === 'user') el.querySelector('.meta').innerHTML = `<b>You</b><span class="tag">${hhmm(m.ts)}</span>`;
-  else {
-    const stance = !m.streaming && /^STANCE:/i.test(lastLine(m.text)) ? (/CONVERGED/i.test(lastLine(m.text)) ? '<span class="stance yes">Converged</span>' : '<span class="stance">Open</span>') : '';
-    const resTag = isResult ? `<span class="res">${r.kind === 'chain' ? 'Verdict' : 'Synthesis'}</span>` : '';
-    const acts = !m.streaming && m.text ? `<span class="mact"><button class="btn ghost sm icon tiny" data-copy-msg="${isResult ? 'Result copied as Markdown' : 'Message copied'}" data-copy="${esc(isResult ? resultMd(r, m) : cleanText(m.text))}" title="Copy as Markdown" aria-label="Copy ${esc(m.name)}'s message as Markdown">${icon('copy', 'width:13px;height:13px')}</button></span>` : '';
-    el.querySelector('.meta').innerHTML = `<b>${esc(m.name)}</b><span class="tag">${esc(m.label || '')}</span>${m.verdict ? `<span class="verdict ${m.verdict}">${m.verdict === 'pass' ? 'PASS' : 'FAIL'}</span>` : ''}${stance}${resTag}${m.streaming && s?.activity ? `<span class="act" role="status">${esc(s.activity)}…</span>` : ''}${acts}`;
-    const foot = el.querySelector('.foot');
-    foot.innerHTML = m.streaming ? '' : [hhmm(m.ts), m.ended ? fmtDur(new Date(m.ended) - new Date(m.ts)) : '', m.tokens ? `${fmtTok(m.tokens)} tokens` : ''].filter(Boolean).map(esc).join('<span aria-hidden="true">·</span>');
-    foot.title = m.streaming ? '' : [m.cached ? `${fmtTok(m.cached)} cached` : '', m.cost ? '$' + m.cost.toFixed(3) : '', m.effort ? (EFFORT[m.effort] || m.effort) + ' effort' : '', m.tools === 'none' ? 'no tools' : ''].filter(Boolean).join(' · ');
-  }
+  el.querySelector('.msg-head').innerHTML = msgHeadHtml(m, r);
   const c = el.querySelector('.content'), st = tw[m.id];
-  if (m.streaming) { if (!st || (!st.shown && !st.pending)) c.innerHTML = '<span class="typing" role="status" aria-label="waiting for text"><i></i><i></i><i></i></span>'; }
+  if (m.streaming) { if (!st || (!st.shown && !st.pending)) c.innerHTML = '<span class="sr-only">Writing…</span><span class="caret" aria-hidden="true"></span>'; }
   else if (!st || !st.pending) {
-    c.classList.remove('raw'); c.innerHTML = md(cleanText(m.text)) + (m.error ? `<div class="err" role="alert">${esc(m.error)}</div>` : '');
+    c.classList.remove('raw'); c.innerHTML = md(cleanText(m.text)) + (m.error ? `<div class="err" role="alert">${icon('x', 12)}<span>${esc(m.error)}</span></div>` : '');
   }
   if (scroll && near) f.scrollTop = f.scrollHeight;
+  if (scroll) decorateSoon();
 }
 // Reveal streamed text progressively; Codex delivers whole messages at once.
 function twLoop() {
@@ -527,7 +596,7 @@ function twLoop() {
     if (!st.pending) continue;
     const n = Math.max(3, Math.ceil(st.pending.length / 12));
     st.shown += st.pending.slice(0, n); st.pending = st.pending.slice(n);
-    const el = document.querySelector(`#feedInner [data-id="${id}"] .content`);
+    const el = document.querySelector(`#feedInner [data-id="${CSS.escape(id)}"] .content`);
     if (el) { el.classList.add('raw'); el.textContent = st.shown; el.insertAdjacentHTML('beforeend', '<span class="caret" aria-hidden="true"></span>'); const f = $('#feed'); if (f && f.scrollHeight - f.scrollTop - f.clientHeight < 160) f.scrollTop = f.scrollHeight; }
     if (!st.pending) { const m = findMsg(id); if (m && !m.streaming) paintMsg(m); }
   }
@@ -535,65 +604,156 @@ function twLoop() {
 }
 const findMsg = (id) => { for (const r of Object.values(S.rooms)) { const m = r.messages?.find((x) => x.id === id); if (m) return m; } return null; };
 
-/* ================= inspector: workflow ================= */
+// Round verdict from STANCE lines: who would sign the current direction (CONVERGED, or a silent agreement) and who is still open.
+const stanceOf = (m) => { const x = lastLine(m.text).match(/^STANCE:\s*(\w+)/i); return x ? x[1].toLowerCase() : null; };
+const satOut = (r, id, n) => r.messages.some((x) => x.seatOut && x.seatOut.seatId === id && Number(x.seatOut.round) < n);
+function roundVerdict(r, n) {
+  const agreed = [], open = [], failed = [], waiting = [];
+  let stances = 0;
+  for (const id of r.seatIds || []) {
+    if (satOut(r, id, n)) continue;
+    const name = S.seats[id]?.name || id;
+    if (r.messages.some((x) => x.skip && x.skip.seatId === id && String(x.skip.round) === String(n))) { agreed.push(`${name} (silently)`); stances++; continue; }
+    const m = r.messages.find((x) => x.seatId === id && String(x.round) === String(n));
+    if (!m || m.streaming) { waiting.push(name); continue; }
+    if (m.error || m.failed) { failed.push(name); continue; }
+    const st = stanceOf(m); if (st) stances++;
+    (st === 'converged' ? agreed : open).push(name);
+  }
+  if (!stances) return null;
+  const replied = agreed.length + open.length + failed.length, total = replied + waiting.length;
+  const overall = agreed.length && !open.length ? 'Agreed' : agreed.length ? 'Contested' : 'Open';
+  return { agreed, open, failed, waiting, replied, total, overall, live: r.status === 'running' && waiting.length > 0 };
+}
+function verdictHtml(v, n) {
+  const ov = { Agreed: ['v-ok', 'check'], Contested: ['v-warn', 'half'], Open: ['v-open', 'ring'] }[v.overall];
+  const sub = v.live ? `so far · ${v.replied} of ${v.total} replied` : v.waiting.length ? `${v.waiting.length} did not reply` : 'from STANCE lines';
+  const row = (cls, ic, label, names) => names.length ? `<li class="vrow ${cls}"><span class="vlabel">${icon(ic, 12)}${label}<span class="n">${names.length}/${v.total}</span></span><span>${names.map(esc).join(', ')}</span></li>` : '';
+  return `<span class="round-node" aria-hidden="true">${icon('list', 12)}</span>
+    <div class="vblock" role="group" aria-label="Round ${n} verdict: ${v.overall}">
+      <div class="vb-head ${v.overall === 'Contested' ? 'v-warn' : ''}"><span class="vb-title">Round ${n} verdict</span><span class="vlabel ${ov[0]}">${icon(ov[1], 12)}${v.overall}</span><span class="vb-sub">${sub}</span></div>
+      <ul class="verdicts">${row('v-ok', 'check', 'Agreed', v.agreed)}${row('v-open', 'ring', 'Open', v.open)}${row('v-fail', 'x', 'No stance', v.failed)}</ul>
+    </div>`;
+}
+function roundDesc(r, key, ms, running) {
+  const mode = r.kind === 'meeting' ? (key === '1' ? `parallel · ${(r.seatIds || []).length} agents` : key === 'synthesis' ? 'writes BRAINSTORM.md' : 'in order') : r.kind === 'chain' ? 'propose → review' : '';
+  if (running || !ms.length) return mode;
+  const start = Math.min(...ms.map((m) => new Date(m.ts).getTime())), end = Math.max(...ms.map((m) => new Date(m.ended || m.ts).getTime()));
+  return [mode, fmtDur(end - start)].filter(Boolean).join(' · ');
+}
+// Round markers (running vs done) and verdict blocks, placed after the last item of their round.
+let decoT = null;
+const decorateSoon = () => { if (decoT) return; decoT = requestAnimationFrame(() => { decoT = null; decorate(); }); };
+function decorate() {
+  const r = S.rooms[S.active], inner = $('#feedInner'); if (!r || !inner) return;
+  $$('.round[data-round]', inner).forEach((el) => {
+    const key = el.dataset.round, ms = r.messages.filter((m) => isAgentMsg(m) && String(m.round) === key);
+    // Running while a turn streams, or between two turns of the round the workflow is still in.
+    const running = ms.some((m) => m.streaming) || (r.status === 'running' && String(r.round) === key);
+    if (el.classList.contains('running') !== running || !el.dataset.painted) {
+      el.classList.toggle('running', running); el.classList.toggle('done', !running); el.dataset.painted = '1';
+      el.querySelector('.round-node').innerHTML = running ? '<span class="dot run"></span>' : icon('check', 12);
+    }
+    el.querySelector('.desc').textContent = roundDesc(r, key, ms, running);
+  });
+  if (r.kind !== 'meeting') return;
+  const rounds = [...new Set(r.messages.filter(isAgentMsg).map((m) => m.round).filter((x) => typeof x === 'number'))];
+  for (const n of rounds) {
+    const v = roundVerdict(r, n); let el = inner.querySelector(`.vblock-entry[data-verdict="${n}"]`);
+    if (!v) { el?.remove(); continue; }
+    if (!el) { el = document.createElement('div'); el.className = 'entry vblock-entry'; el.dataset.verdict = String(n); }
+    const key = JSON.stringify(v); if (el.dataset.key !== key) { el.innerHTML = verdictHtml(v, n); el.dataset.key = key; }
+    const members = $$(`[data-round="${n}"]`, inner); const last = members[members.length - 1];
+    if (last && last.nextElementSibling !== el) last.after(el);
+  }
+}
+
+/* ================= inspector: workflow + usage ================= */
 function nodeState(r, seatId, round) {
   const m = r.messages.find((x) => x.seatId === seatId && String(x.round) === String(round));
-  if (m) return { m, state: m.streaming ? 'running' : m.error ? 'failed' : 'done' };
+  if (m) return { m, state: m.streaming ? 'running' : (m.error || m.failed) ? 'failed' : 'done' };
   const silent = r.messages.find((x) => x.skip && x.skip.seatId === seatId && String(x.skip.round) === String(round));
   const early = r.messages.find((x) => x.earlyStop);
-  if (silent || (early && typeof round === 'number' && round > early.earlyStop)) return { state: 'skipped', why: silent ? 'silent agreement' : 'converged early' };
-  return { state: r.status === 'running' ? 'pending' : 'skipped' };
+  const out = typeof round === 'number' && satOut(r, seatId, round);
+  if (silent || out || (early && typeof round === 'number' && round > early.earlyStop)) return { state: 'skipped', why: silent ? 'silent agreement' : out ? 'sat out' : 'converged early' };
+  return { state: r.status === 'running' ? 'pending' : 'skipped', why: r.status === 'running' ? '' : 'not run' };
 }
-function stage(title, nodes, { parallel = false, meta = '' } = {}) {
+function stepHtml(title, kind, nodes, extraState) {
   const states = nodes.map((n) => n.state);
-  const st = states.includes('running') ? 'running' : states.every((s) => s === 'done' || s === 'skipped') && states.some((s) => s === 'done') ? 'done' : states.every((s) => s === 'skipped') ? 'skipped' : 'pending';
-  return `<div class="wf-stage ${st}"><div class="wf-marker" aria-hidden="true"></div><div class="wf-title">${esc(title)}${parallel ? '<span class="pill" style="height:18px;font-size:10.5px">parallel</span>' : ''}<span class="m">${meta}</span></div>
-    <div class="wf-nodes ${parallel ? 'par' : ''}">${nodes.map(nodeHtml).join('')}</div></div>`;
+  const settled = states.length && states.every((s) => s === 'done' || s === 'skipped' || s === 'failed');
+  const begun = states.includes('pending') && states.some((s) => s === 'done' || s === 'failed' || s === 'skipped');
+  const st = extraState || (states.includes('running') || begun ? 'running' : settled && states.includes('done') ? 'done'
+    : settled && states.includes('failed') ? 'failed' : settled ? 'skipped' : 'pending');
+  const mark = st === 'done' ? icon('check', 10) : st === 'running' ? '<span class="dot run" aria-hidden="true"></span>' : st === 'failed' ? icon('x', 10) : st === 'skipped' ? icon('dash', 10) : '';
+  return { st, html: `<li class="wf-step ${st}"><span class="mark-s" title="${esc(cap(st === 'pending' ? 'queued' : st))}">${mark}<span class="sr-only">${esc(st === 'pending' ? 'Queued' : cap(st))}</span></span>
+    <div class="step-body"><div class="step-head"><span class="step-name">${esc(title)}</span>${kind ? `<span class="step-kind">${esc(kind)}</span>` : ''}</div>
+    ${nodes.length ? `<ul class="nodes">${nodes.map(nodeHtml).join('')}</ul>` : ''}</div></li>` };
 }
-const STATE_TXT = { done: 'done', failed: 'failed', skipped: 'skipped', running: 'running', pending: 'pending' };
 function nodeHtml(n) {
-  const s = S.seats[n.seatId], m = n.m;
-  const ic = n.state === 'done' ? icon('check', 'width:14px;height:14px;color:var(--ok)') : n.state === 'failed' ? icon('alert', 'width:14px;height:14px;color:var(--bad)') : n.state === 'skipped' ? icon('skip', 'width:14px;height:14px;color:var(--text-3)') : n.state === 'running' ? icon('clock', 'width:14px;height:14px;color:var(--warn)') : icon('clock', 'width:14px;height:14px;color:var(--text-3)');
-  const extra = m?.verdict ? `<span class="verdict ${m.verdict}" style="height:16px;font-size:10px">${m.verdict.toUpperCase()}</span>` : '';
-  const stat = n.state === 'running' && s?.startedAt ? `<span class="s" data-since="${s.startedAt}"></span>` : m && !m.streaming && m.tokens ? `<span class="s">${fmtTok(m.tokens)}${m.ended ? ' · ' + fmtDur(new Date(m.ended) - new Date(m.ts)) : ''}</span>` : n.why ? `<span class="s">${n.why}</span>` : '';
-  const inner = `${avatar(n.seatId, 'xs')}<span class="n">${esc(s?.name || n.seatId)} <small>${esc(n.label || '')}</small></span>${extra}${stat}${ic}<span class="sr-only">${STATE_TXT[n.state] || n.state}</span>`;
-  return m ? `<button class="wf-node ${n.state}" data-jump="${m.id}" title="Jump to this message">${inner}</button>` : `<div class="wf-node ${n.state}">${inner}</div>`;
+  const s = S.seats[n.seatId], m = n.m, name = esc(s?.name || m?.name || n.seatId);
+  const vt = m?.verdict ? `<span class="vt ${m.verdict === 'pass' ? 'pass' : 'fail'}">${m.verdict === 'pass' ? 'PASS' : 'FAIL'}</span>` : '';
+  const label = n.label ? ` <small>${esc(n.label)}</small>` : '';
+  let cols, st, tip = '';
+  if (n.state === 'running') { cols = `<span class="node-tok"></span><span class="node-time" data-since="${esc(m?.ts || s?.startedAt || '')}">${m ? fmtDur(Date.now() - new Date(m.ts)) : ''}</span>`; st = '<span class="spin" role="img" aria-label="Running"></span>'; tip = s?.activity || 'Running'; }
+  else if (n.state === 'done' || n.state === 'failed') {
+    cols = `<span class="node-tok">${m?.tokens ? fmtTok(m.tokens) : '–'}</span><span class="node-time">${m?.ended ? fmtDur(new Date(m.ended) - new Date(m.ts)) : ''}</span>`;
+    st = n.state === 'done' ? `${icon('check', 10)}<span class="sr-only">Done</span>` : `<span class="fail">${icon('x', 10)}</span><span class="sr-only">Failed</span>`; tip = n.state === 'failed' ? m?.error || 'Failed' : 'Jump to this message';
+  } else if (n.state === 'skipped') { cols = `<span class="node-q">Skipped</span>`; st = icon('dash', 10); tip = n.why ? `Skipped: ${n.why}` : 'Skipped'; }
+  else { cols = '<span class="node-q">Queued</span>'; st = '<span class="dot hollow" aria-hidden="true"></span>'; tip = 'Queued'; }
+  const inner = `${avatar(n.seatId, 'xs', m?.agent)}<span class="node-name">${name}${label}${vt}</span>${cols}<span class="node-st">${st}</span>`;
+  return `<li>${m ? `<button class="node ${n.state}" data-jump="${esc(m.id)}" title="${esc(tip)}">${inner}</button>` : `<div class="node ${n.state}" title="${esc(tip)}">${inner}</div>`}</li>`;
 }
 function renderInspector() {
   const ins = $('#inspector'); const r = S.rooms[S.active];
   if (!r) { ins.innerHTML = ''; return; } // Home: no inspector (#app.no-ins)
-  let flow = '';
+  const steps = [];
   if (r.kind === 'meeting') {
     const N = (id, round, label) => ({ seatId: id, label, ...nodeState(r, id, round) });
-    if (r.scoutId) flow += stage('Scout', [N(r.scoutId, 'scout', 'reads code, writes brief')]);
-    flow += stage('Round 1 · ideas', r.seatIds.map((id) => N(id, 1, 'independent')), { parallel: true });
-    for (let i = 2; i <= r.rounds; i++) flow += stage(`Round ${i} · discussion`, r.seatIds.map((id) => N(id, i, 'no tools')));
-    if (r.synthId) flow += stage('Synthesis', [N(r.synthId, 'synthesis', 'writes to BRAINSTORM.md')]);
+    if (r.scoutId) steps.push(stepHtml('Scout', 'reads the code once', [N(r.scoutId, 'scout')]));
+    steps.push(stepHtml('Round 1', 'ideas, parallel', (r.seatIds || []).map((id) => N(id, 1))));
+    for (let i = 2; i <= r.rounds; i++) steps.push(stepHtml(`Round ${i}`, 'discussion, in order', (r.seatIds || []).map((id) => N(id, i))));
+    if (r.synthId) steps.push(stepHtml('Synthesis', 'writes BRAINSTORM.md', [N(r.synthId, 'synthesis')]));
   } else if (r.kind === 'chain') {
     const passedAt = r.messages.find((m) => m.verdict === 'pass')?.round;
     for (let i = 1; i <= r.maxRounds; i++) {
       const nodes = [{ seatId: r.builderId, label: 'propose', ...nodeState(r, r.builderId, i) }, { seatId: r.reviewerId, label: 'review', ...nodeState(r, r.reviewerId, i) }];
       if (passedAt && i > passedAt) nodes.forEach((n) => { n.state = 'skipped'; n.why = 'passed'; });
-      flow += stage(`Round ${i}`, nodes);
+      steps.push(stepHtml(`Round ${i}`, 'propose → review', nodes));
     }
-    flow += `<div class="wf-stage ${r.status === 'passed' ? 'done' : ''}"><div class="wf-marker" aria-hidden="true"></div><div class="wf-title">${r.status === 'passed' ? 'Passed review' : r.status === 'needs-you' ? 'Your decision' : 'Result'}</div></div>`;
+    const endSt = r.status === 'passed' ? 'done' : r.status === 'running' ? 'pending' : r.status === 'error' ? 'failed' : 'skipped';
+    steps.push(stepHtml(r.status === 'passed' ? 'Passed review' : r.status === 'needs-you' ? 'Your decision' : 'Result', '', [], endSt));
   } else {
     const turns = r.messages.filter((m) => m.seatId === r.seatId);
-    flow = stage('Conversation', turns.length ? turns.map((m) => ({ seatId: m.seatId, label: hhmm(m.ts), m, state: m.streaming ? 'running' : m.error ? 'failed' : 'done' })) : [{ seatId: r.seatId, state: 'pending', label: 'waiting for a message' }]);
+    steps.push(stepHtml('Conversation', `${turns.length} turn${turns.length === 1 ? '' : 's'}`, turns.length ? turns.map((m) => ({ seatId: m.seatId, label: hhmm(m.ts), m, state: m.streaming ? 'running' : (m.error || m.failed) ? 'failed' : 'done' })) : [{ seatId: r.seatId, state: 'pending', label: 'waiting for a message' }]));
   }
-  // usage in this session (computed by the server after every agent turn)
-  const u = r.usage, per = Object.entries(u?.perSeat || {}).filter(([, v]) => v > 0), max = Math.max(1, ...per.map(([, v]) => v));
-  ins.innerHTML = `<div class="ins-sec"><h2 class="ins-h">Workflow</h2>${flow}</div>
-    <div class="ins-sec"><h2 class="ins-h">Usage ${u?.tokens ? `<span style="text-transform:none;letter-spacing:0">${fmtTok(u.tokens)} net</span>` : ''}</h2>
-      ${per.map(([id, v]) => `<div class="usage-row">${avatar(id, 'xs')}<span style="width:56px;overflow:hidden;text-overflow:ellipsis">${esc(S.seats[id]?.name || id)}</span><div class="bar" role="img" aria-label="${esc(S.seats[id]?.name || id)}: ${fmtTok(v)} tokens"><i style="width:${(v / max) * 100}%;background:${seatColor(id)}"></i></div><span class="v">${fmtTok(v)}</span></div>`).join('') || '<div class="hint">No usage yet</div>'}
-      <dl class="kv" style="margin-top:10px">${u ? `<dt>Cached input</dt><dd>${fmtTok(u.cached)}</dd><dt>Claude cost</dt><dd>$${(u.cost || 0).toFixed(3)}</dd>` : ''}<dt>Started</dt><dd>${hhmm(r.created)}</dd></dl></div>`;
-  $$('[data-jump]', ins).forEach((el) => el.onclick = () => { jumpTo(el.dataset.jump); if (window.innerWidth <= 1180) setPanel('show-ins', false); });
+  const cur = steps.findIndex((s) => s.st === 'running' || s.st === 'pending');
+  const aside = r.status === 'running' && cur >= 0 && r.kind !== 'dm' ? `Step ${cur + 1} of ${steps.length}` : r.kind === 'dm' ? '' : `${steps.length} steps`;
+  // Usage in this session (computed by the server after every agent turn).
+  const u = r.usage || {}, per = Object.entries(u.perSeat || {}).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]), max = Math.max(1, ...per.map(([, v]) => v));
+  const done = r.messages.filter((m) => isAgentMsg(m) && !m.streaming).length;
+  const planned = r.kind === 'meeting' ? (r.scoutId ? 1 : 0) + (r.seatIds || []).length * (r.rounds || 1) + (r.synthId ? 1 : 0) : r.kind === 'chain' ? 2 * (r.maxRounds || 1) : 0;
+  const turns = r.status === 'running' && planned ? `${done}<small>/${planned}</small>` : String(done);
+  const close = `<button class="icon-btn panel-close" data-close-ins aria-label="Close panel">${icon('x', 14)}</button>`;
+  ins.innerHTML = `<section class="panel" aria-labelledby="wfH"><header class="panel-head"><h2 id="wfH">Workflow</h2><span class="aside">${esc(aside)}</span>${close}</header>
+      <div class="wf-cols eyebrow" aria-hidden="true"><span class="c-tok">Tok</span><span class="c-time">Time</span></div>
+      <ol class="wf-steps">${steps.map((s) => s.html).join('')}</ol></section>
+    <section class="panel" aria-labelledby="usH"><header class="panel-head"><h2 id="usH">Usage</h2><span class="aside">this session</span></header>
+      <div class="tiles">
+        <div class="tile" title="Net tokens: uncached input + output"><span class="eyebrow">Tokens</span><span class="tile-val">${fmtTok(u.tokens || 0)}</span></div>
+        <div class="tile" title="Claude Code cost reported by the CLI (Codex reports none)"><span class="eyebrow">Cost</span><span class="tile-val">${fmtCost(u.cost || 0)}</span></div>
+        <div class="tile" title="${r.status === 'running' && planned ? `${done} finished of up to ${planned} agent turns` : `${done} agent turns`}"><span class="eyebrow">Turns</span><span class="tile-val">${turns}</span></div>
+      </div>
+      <div class="ulist-head"><span class="eyebrow">By agent</span><span class="note-r">net · ${fmtTok(u.cached || 0)} cached</span></div>
+      ${per.length ? `<div class="ulist" role="list" aria-label="Net tokens by agent">${per.map(([id, v]) => `<div class="urow" role="listitem">${avatar(id, 'xs')}<span>${esc(S.seats[id]?.name || id)}</span><span class="meter" aria-hidden="true"><i style="width:${(v / max) * 100}%"></i></span><span class="v">${fmtTok(v)}</span></div>`).join('')}</div>` : '<div class="hint">No usage yet</div>'}
+    </section>`;
+  $$('[data-jump]', ins).forEach((el) => el.onclick = () => { jumpTo(el.dataset.jump); if (window.innerWidth <= 1023) setPanel('show-ins', false); });
+  $('[data-close-ins]', ins).onclick = () => { setPanel('show-ins', false); $('#insBtn')?.focus(); };
   tickTimers();
 }
 let insTimer = null;
 const scheduleInspector = () => { if (insTimer) return; insTimer = setTimeout(() => { insTimer = null; renderInspector(); }, 150); };
 function tickTimers() {
-  $$('[data-since]').forEach((el) => { el.textContent = fmtDur(Date.now() - new Date(el.dataset.since)); });
+  $$('[data-since]').forEach((el) => { if (el.dataset.since) el.textContent = fmtDur(Date.now() - new Date(el.dataset.since)); });
   $$('[data-reset]').forEach((el) => { el.textContent = el.dataset.reset ? 'resets in ' + countdown(Number(el.dataset.reset)) : ''; });
 }
 setInterval(tickTimers, 1000);
@@ -612,7 +772,7 @@ function overlay(html, cls = 'modal', opts = {}) {
   first?.focus();
   return box;
 }
-const closeBtn = () => `<button class="btn ghost icon" data-close aria-label="Close">${icon('x')}</button>`;
+const closeBtn = () => `<button class="icon-btn" data-close aria-label="Close">${icon('x')}</button>`;
 const focusables = (root) => $$('a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), summary, [contenteditable]:not([contenteditable="false"]), [tabindex]:not([tabindex="-1"])', root).filter((el) => (typeof el.checkVisibility === 'function' ? el.checkVisibility() : el.offsetParent !== null) || el === document.activeElement);
 // Grouped toggle buttons (Workflow, Runtime, Effort, Theme) behave as a radio group for assistive tech.
 const seg = (id, items, cur, label, attr = 'data-v') => `<div class="seg" id="${id}" role="radiogroup" aria-label="${esc(label)}">${items.map(([v, t]) => `<button type="button" role="radio" aria-checked="${v === cur}" ${attr}="${v}" class="${v === cur ? 'on' : ''}">${t}</button>`).join('')}</div>`;
@@ -623,12 +783,17 @@ const PRESETS = [
   { id: 'review', kind: 'chain', name: 'Propose → Review', desc: 'proposer + reviewer · 2 rounds', min: 2 },
 ];
 const presetById = (id) => PRESETS.find((p) => p.id === id) || null;
-// Default workflow for Ctrl+K / New session: the remembered team preset, else the last workflow used.
+// Default workflow for N / New session: the remembered team preset, else the last workflow used.
 const newKind = () => presetById(ls.get('ob.new.preset'))?.kind || ls.get('ob.new.kind') || 'meeting';
 const editing = (t) => !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
 function setPanel(cls, on) {
   const app = $('#app'); app.classList.toggle(cls, on);
   const btn = cls === 'show-side' ? $('#menuBtn') : $('#insBtn'); btn?.setAttribute('aria-expanded', String(!!on));
+}
+// Ctrl/⌘ K: search sessions (opens the sidebar drawer on a phone).
+function focusSearch() {
+  if (window.innerWidth <= 719) setPanel('show-side', true);
+  const s = $('#search'); s.focus(); s.select();
 }
 document.addEventListener('keydown', (e) => {
   const dlg = $('#overlay [role="dialog"]');
@@ -644,15 +809,17 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
     if (meterPop) { meterPop = false; renderMeters(); $('#metersBtn')?.focus(); }
     else if (dlg) softClose();
+    else if (e.target.id === 'search') { if (e.target.value) { e.target.value = ''; S.query = ''; renderSessions(); } else { e.target.blur(); if ($('#app').classList.contains('show-side')) { setPanel('show-side', false); $('#menuBtn')?.focus(); } } }
     else if ($('#app').classList.contains('show-side')) { setPanel('show-side', false); $('#menuBtn')?.focus(); }
     else if ($('#app').classList.contains('show-ins')) { setPanel('show-ins', false); $('#insBtn')?.focus(); }
     else if (editing(e.target) && e.target.id === 'compose') e.target.blur();
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); if (!dlg) openNew(newKind()); return; }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'k') { e.preventDefault(); if (!dlg) focusSearch(); return; }
   if (dlg || editing(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === '/') { const ta = $('#compose'); if (ta) { e.preventDefault(); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } else toast('No composer here — open a Direct chat or a running session'); }
   else if (e.key === '?') { e.preventDefault(); openHelp(); }
+  else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openNew(newKind()); }
 });
 
 function openHelp() {
@@ -660,7 +827,8 @@ function openHelp() {
     <div class="modal-b">
       <div class="label">Keyboard shortcuts</div>
       <dl class="keys">
-        <dt><kbd>${MOD}</kbd><kbd>K</kbd></dt><dd>New session</dd>
+        <dt><kbd>N</kbd></dt><dd>New session</dd>
+        <dt><kbd>${MOD}</kbd><kbd>K</kbd></dt><dd>Search sessions (<kbd>Enter</kbd> opens the first match)</dd>
         <dt><kbd>/</kbd></dt><dd>Focus the composer</dd>
         <dt><kbd>?</kbd></dt><dd>Open this help</dd>
         <dt><kbd>Esc</kbd></dt><dd>Close dialogs, popovers and side panels</dd>
@@ -669,14 +837,14 @@ function openHelp() {
       </dl>
       <div class="label">How a session works</div>
       <ul class="plain">
-        <li><b>Debate</b>: optional scout brief → parallel round 1 → discussion rounds (stops early when everyone reports <code class="inline">STANCE: CONVERGED</code>) → optional synthesis, saved to <code class="inline">.orchestra/BRAINSTORM.md</code>.</li>
+        <li><b>Debate</b>: optional scout brief → parallel round 1 → discussion rounds (stops early when everyone reports <code class="inline">STANCE: CONVERGED</code>; each round ends with a verdict: Agreed, Contested or Open) → optional synthesis, saved to <code class="inline">.orchestra/BRAINSTORM.md</code>.</li>
         <li><b>Propose → Review</b>: the proposer drafts, the reviewer answers <code class="inline">VERDICT: PASS</code> or <code class="inline">FAIL</code>; repeats until PASS or the round limit.</li>
         <li><b>Direct chat</b>: one agent, with memory of earlier messages.</li>
-        <li>Agents read your project and never edit it, unless a seat has <code class="inline">perm: write</code> in <code class="inline">.orchestra/seats.json</code> (v0.1 has no toggle for it in the UI). Every turn uses your own Claude / Codex plan quota.</li>
+        <li>Agents read your project and never edit it, unless a seat has <code class="inline">perm: write</code> in <code class="inline">.orchestra/seats.json</code> (v0.1 has no toggle for it in the UI). Every turn uses your own Claude Code / Codex plan quota.</li>
       </ul>
       <div class="label">Setup</div>
       <p class="hint" style="margin:0 0 8px">Each CLI your agents use must be installed and signed in on this machine; one of the two is enough if all your agents use it.</p>
-      <button class="btn sm" id="hDoctor">${icon('refresh', 'width:13px;height:13px')}Run setup check</button>
+      <button class="btn" id="hDoctor">${icon('refresh', 14)}Run setup check</button>
     </div>
     <div class="modal-f"><button class="btn" data-close>Close</button></div>`, 'modal sm');
   $$('[data-close]', box).forEach((b) => b.onclick = closeOverlay);
@@ -724,7 +892,7 @@ function openNew(kind, preset, source) {
   let presetId = 'custom';
   if (!preset) { const p = presetById(ls.get('ob.new.preset')); if (p && (p.kind === kind || source !== 'template') && S.order.length >= p.min) { presetId = p.id; kind = p.kind; Object.assign(v[kind], presetValues(p.id)); } }
 
-  const opt = (sel, none) => (none ? '<option value="">None</option>' : '') + seats.map((s) => `<option value="${s.id}" ${s.id === sel ? 'selected' : ''}>${esc(s.name)} · ${esc(s.model)}</option>`).join('');
+  const opt = (sel, none) => (none ? '<option value="">None</option>' : '') + seats.map((s) => `<option value="${esc(s.id)}" ${s.id === sel ? 'selected' : ''}>${esc(s.name)} · ${esc(TOOL[s.agent] || s.agent)}</option>`).join('');
   const nums = (list, sel) => [...new Set([...list, Number(sel) || list[1]])].sort((a, b) => a - b).map((n) => `<option ${n === (Number(sel) || list[1]) ? 'selected' : ''}>${n}</option>`).join('');
   const ctxBox = (on, style = '') => `<label class="check-l" style="${style}"><input type="checkbox" id="nCtx" ${on ? 'checked' : ''}> Include project notes (.orchestra PLAN / HANDOFF / LOG)</label>`;
   const box = overlay(`<div class="modal-h"><h2 class="modal-t" id="dlgTitle">New session</h2>${closeBtn()}</div>
@@ -735,7 +903,7 @@ function openNew(kind, preset, source) {
       ${seg('nKind', ['meeting', 'chain', 'dm'].map((k) => [k, KIND[k]]), kind, 'Workflow', 'data-k')}
       <div id="nForm"></div>
     </div>
-    <div class="modal-f"><span class="hint" id="nCost" role="status" style="margin:0 auto 0 0;align-self:center"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="nGo">Start</button></div>`);
+    <div class="modal-f"><span class="hint" id="nCost" role="status" style="margin:0 auto 0 0"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="nGo">Start</button></div>`);
   $$('[data-close]', box).forEach((b) => b.onclick = closeOverlay);
   const cur = () => box.querySelector('#nKind .on').dataset.k, q = (s) => box.querySelector(s);
   const chips = () => {
@@ -761,7 +929,7 @@ function openNew(kind, preset, source) {
   const update = () => {
     read(); const k = cur(), x = v[k];
     const n = k === 'meeting' ? (x.scout ? 1 : 0) + x.participants.length * x.rounds + (x.facilitator ? 1 : 0) : k === 'chain' ? 2 * x.max : 1;
-    q('#nCost').textContent = `Up to ${n} agent run${n === 1 ? '' : 's'} · uses your Claude/Codex quota`;
+    q('#nCost').textContent = `Up to ${n} agent run${n === 1 ? '' : 's'} · uses your Claude Code / Codex quota`;
     if (k === 'dm') { const s = S.seats[x.seat]; q('#nDmHint').textContent = s ? `Continues your existing chat with ${s.name} (memory: ${s.thread ? 'active' : 'empty'})` : ''; }
   };
   // Any setup change (not the text) turns the selection into "Custom".
@@ -770,7 +938,7 @@ function openNew(kind, preset, source) {
     const k = cur(), f = q('#nForm'), x = v[k];
     if (k === 'meeting') f.innerHTML = `
       <label class="label" for="nTopic">Topic</label><textarea class="input" id="nTopic" placeholder="What should the agents discuss?">${esc(x.topic)}</textarea>
-      <div class="label" id="nPicksL">Participants</div><div class="picks" id="nPicks" role="group" aria-labelledby="nPicksL">${seats.map((s) => `<button type="button" class="pick ${x.participants.includes(s.id) ? 'on' : ''}" aria-pressed="${x.participants.includes(s.id)}" data-id="${s.id}">${avatar(s.id, 'xs')}${esc(s.name)}</button>`).join('')}</div>
+      <div class="label" id="nPicksL">Participants</div><div class="picks" id="nPicks" role="group" aria-labelledby="nPicksL">${seats.map((s) => `<button type="button" class="pick ${x.participants.includes(s.id) ? 'on' : ''}" aria-pressed="${x.participants.includes(s.id)}" data-id="${esc(s.id)}">${avatar(s.id, 'xs')}${esc(s.name)}<span class="pk">${icon('check', 12)}</span></button>`).join('')}</div>
       <div class="grid3"><div><label class="label" for="nScout">Scout</label><select class="input" id="nScout" aria-describedby="nScoutH">${opt(x.scout, true)}</select><div class="hint" id="nScoutH">Reads the code once so others don't have to (saves tokens)</div></div>
         <div><label class="label" for="nSynth">Facilitator</label><select class="input" id="nSynth" aria-describedby="nSynthH">${opt(x.facilitator, true)}</select><div class="hint" id="nSynthH">Summarizes at the end; saved to .orchestra/BRAINSTORM.md</div></div>
         <div><label class="label" for="nRounds">Rounds</label><select class="input" id="nRounds" aria-describedby="nRoundsH">${nums([1, 2, 3, 4], x.rounds)}</select><div class="hint" id="nRoundsH">Stops early on consensus</div></div></div>
@@ -813,22 +981,22 @@ function openNew(kind, preset, source) {
 
 function openAgent(id) {
   const isNew = !id; const s = isNew ? { name: '', role: '', agent: 'codex', model: S.models.codex?.[0] || '', effort: 'medium', perm: 'read', target: '', budget: 0, color: '#14b8a6' } : S.seats[id];
-  const box = overlay(`<div class="modal-h"><h2 class="modal-t" id="dlgTitle">${isNew ? 'New agent' : `${avatar(id, 'lg')}${esc(s.name)}`}</h2>${closeBtn()}</div>
+  const box = overlay(`<div class="modal-h"><h2 class="modal-t" id="dlgTitle">${isNew ? 'New agent' : `${avatar(id, 'xl')}${esc(s.name)}`}</h2>${closeBtn()}</div>
     <div class="modal-b">
       <div class="grid2"><div><label class="label" for="aName">Name</label><input class="input" id="aName" maxlength="24" value="${esc(s.name)}" required></div><div><label class="label" for="aRole">Role</label><input class="input" id="aRole" maxlength="40" value="${esc(s.role || '')}" placeholder="e.g. Reviewer"></div></div>
       <div class="hint">Changing name, role, runtime or scope resets this agent's memory.</div>
-      <div class="label" id="aAgentL">Runtime</div>${seg('aAgent', [['claude', 'Claude CLI'], ['codex', 'Codex CLI']], s.agent, 'Runtime', 'data-a')}
-      <label class="label" for="aModel">Model</label><input class="input" id="aModel" list="aModels" value="${esc(s.model || '')}" placeholder="pick or type a model"><datalist id="aModels"></datalist>
+      <div class="label" id="aAgentL">Runtime</div>${seg('aAgent', [['claude', 'Claude Code'], ['codex', 'Codex']], s.agent, 'Runtime', 'data-a')}
+      <label class="label" for="aModel">Model</label><input class="input" id="aModel" list="aModels" value="${esc(s.model || '')}" placeholder="pick or type a model" style="font-family:var(--font-mono);font-size:12px"><datalist id="aModels"></datalist>
       <div class="label" id="aEffortL">Effort</div><div class="seg" id="aEffort" role="radiogroup" aria-labelledby="aEffortL"></div><div class="hint">Discussion rounds are capped at Medium automatically.</div>
       <details class="adv"><summary>Advanced</summary>
         <div class="label">Permission</div>
-        <div class="hint" style="margin:0 0 4px">${s.perm === 'write' ? '<b>write</b> — this agent may edit files (Claude: <code class="inline">acceptEdits</code> with Edit/Write; Codex: <code class="inline">workspace-write</code>).' : '<b>read-only</b> — this agent proposes changes but never edits files.'} Saving keeps it as is: v0.1 has no toggle here. To change it, stop the board and set <code class="inline">perm</code> to <code class="inline">read</code> or <code class="inline">write</code> in <code class="inline">.orchestra/seats.json</code>, or POST <code class="inline">/api/seats</code>.</div>
-        <label class="label" for="aTarget">Scope</label><input class="input" id="aTarget" value="${esc(s.target || '')}" placeholder="folder or file inside the project (empty = whole project)" style="font-family:var(--mono);font-size:12.5px">
-        <div class="grid2"><div><label class="label" for="aBudget">Token budget</label><input class="input" id="aBudget" type="number" min="0" step="10000" value="${s.budget || 0}" aria-describedby="aBudgetH"><div class="hint" id="aBudgetH">0 = unlimited</div></div><div><label class="label" for="aColor">Color</label><input class="input" id="aColor" type="color" value="${s.color || '#14b8a6'}" style="padding:2px 4px"></div></div>
+        <div class="hint" style="margin:0 0 4px">${s.perm === 'write' ? '<b>write</b> — this agent may edit files (Claude Code: <code class="inline">acceptEdits</code> with Edit/Write; Codex: <code class="inline">workspace-write</code>).' : '<b>read-only</b> — this agent proposes changes but never edits files.'} Saving keeps it as is: v0.1 has no toggle here. To change it, stop the board and set <code class="inline">perm</code> to <code class="inline">read</code> or <code class="inline">write</code> in <code class="inline">.orchestra/seats.json</code>, or POST <code class="inline">/api/seats</code>.</div>
+        <label class="label" for="aTarget">Scope</label><input class="input" id="aTarget" value="${esc(s.target || '')}" placeholder="folder or file inside the project (empty = whole project)" style="font-family:var(--font-mono);font-size:12px">
+        <label class="label" for="aBudget">Token budget</label><input class="input" id="aBudget" type="number" min="0" step="10000" value="${s.budget || 0}" aria-describedby="aBudgetH" style="max-width:200px"><div class="hint" id="aBudgetH">0 = unlimited</div>
       </details>
       ${isNew ? '' : `<div class="label">Usage</div><dl class="kv"><dt>Net tokens</dt><dd>${fmtTok(s.used)}</dd><dt>Cached</dt><dd>${fmtTok(s.cached)}</dd><dt>Cost</dt><dd>$${(s.cost || 0).toFixed(3)}</dd><dt>Memory</dt><dd>${s.thread ? 'active' : 'empty'}</dd></dl>`}
     </div>
-    <div class="modal-f">${isNew ? '' : `<button class="btn danger" id="aDel" style="margin-right:auto">${icon('trash', 'width:14px;height:14px')}Delete</button><button class="btn" id="aReset">Clear memory</button>`}<button class="btn" data-close>Cancel</button><button class="btn primary" id="aSave">${isNew ? 'Add agent' : 'Save'}</button></div>`, 'drawer');
+    <div class="modal-f">${isNew ? '' : `<button class="btn danger" id="aDel" style="margin-right:auto">${icon('trash', 14)}Delete</button><button class="btn" id="aReset">Clear memory</button>`}<button class="btn" data-close>Cancel</button><button class="btn primary" id="aSave">${isNew ? 'Add agent' : 'Save'}</button></div>`, 'drawer');
   $$('[data-close]', box).forEach((b) => b.onclick = closeOverlay);
   let agent = s.agent, effort = s.effort;
   // Runs only when the runtime changes, so a typed model is never reverted.
@@ -849,7 +1017,8 @@ function openAgent(id) {
     const model = box.querySelector('#aModel').value.trim() || S.models[agent]?.[0];
     try {
       // perm is preserved, never downgraded: a write seat configured in seats.json survives a save (and keeps its thread).
-      await api('/api/seats', { id: isNew ? undefined : id, name: box.querySelector('#aName').value || 'Agent', role: box.querySelector('#aRole').value, agent, model, effort, perm: s.perm === 'write' ? 'write' : 'read', target: box.querySelector('#aTarget').value, budget: Number(box.querySelector('#aBudget').value) || 0, color: box.querySelector('#aColor').value });
+      // color is kept as stored: the board shows the tool mark instead of a per-agent colour.
+      await api('/api/seats', { id: isNew ? undefined : id, name: box.querySelector('#aName').value || 'Agent', role: box.querySelector('#aRole').value, agent, model, effort, perm: s.perm === 'write' ? 'write' : 'read', target: box.querySelector('#aTarget').value, budget: Number(box.querySelector('#aBudget').value) || 0, color: /^#[0-9a-f]{6}$/i.test(s.color || '') ? s.color : '#14b8a6' });
       closeOverlay(); toast(isNew ? 'Agent added' : 'Saved');
     } catch {}
   };
@@ -865,10 +1034,10 @@ function openSettings() {
     <div class="modal-b">
       <label class="label" for="sLang">Agents reply in</label><input class="input" id="sLang" value="${esc(S.settings.lang || 'English')}" placeholder="English" aria-describedby="sLangH">
       <div class="hint" id="sLangH">Applies to new conversations (existing memories keep their language). Saved when you leave the field.</div>
-      <div class="label" id="sThemeL">Theme</div>${seg('sTheme', ['system', 'light', 'dark'].map((t) => [t, t[0].toUpperCase() + t.slice(1)]), ls.get('ob.theme') || 'system', 'Theme', 'data-t')}
+      <div class="label" id="sThemeL">Theme</div>${seg('sTheme', ['system', 'light', 'dark'].map((t) => [t, cap(t)]), ls.get('ob.theme') || 'system', 'Theme', 'data-t')}
       <label class="check-l"><input type="checkbox" id="sNotify" ${notify ? 'checked' : ''}> Desktop notification when a session finishes or needs you</label>
       <div class="label">Setup</div>
-      <button class="btn sm" id="sDoctor">${icon('refresh', 'width:13px;height:13px')}Run setup check</button>
+      <button class="btn" id="sDoctor">${icon('refresh', 14)}Run setup check</button>
     </div>
     <div class="modal-f"><button class="btn" data-close>Close</button></div>`, 'modal sm');
   $$('[data-close]', box).forEach((b) => b.onclick = closeOverlay);
@@ -893,6 +1062,12 @@ function openSettings() {
 }
 function applyTheme(t) { ls.set('ob.theme', t); if (t === 'system') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t); }
 applyTheme(ls.get('ob.theme') || 'system');
+// Top-bar toggle: flips the effective theme; Settings > Theme > System follows the OS again.
+function toggleTheme() {
+  const t = document.documentElement.dataset.theme;
+  const dark = t ? t === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  applyTheme(dark ? 'light' : 'dark');
+}
 
 function notify(title, body) {
   if (ls.get('ob.notify') !== '1' || !('Notification' in window) || Notification.permission !== 'granted' || !document.hidden) return;
@@ -904,29 +1079,32 @@ function openRoom(id) {
   S.active = id; ls.set('ob.room', id || '');
   const app = $('#app'); setPanel('show-side', false); app.classList.toggle('no-ins', !id); if (!id) setPanel('show-ins', false);
   renderSessions(); id ? renderRoom() : renderHome(); renderInspector();
-  document.title = id && S.rooms[id] ? `${S.rooms[id].title} · Orchestra Board` : 'Orchestra Board';
+  document.title = id && S.rooms[id] ? `${S.rooms[id].title} · ${APP}` : APP;
 }
 $('#homeBtn').onclick = () => openRoom(null);
 $('#newBtn').onclick = () => openNew(newKind());
 $('#addAgent').onclick = () => openAgent(null);
 $('#settingsBtn').onclick = openSettings;
 $('#helpBtn').onclick = openHelp;
+$('#themeBtn').onclick = toggleTheme;
 $('#menuBtn').onclick = () => setPanel('show-side', !$('#app').classList.contains('show-side'));
 $('#insBtn').onclick = () => setPanel('show-ins', !$('#app').classList.contains('show-ins'));
 $('#main').addEventListener('click', () => { if ($('#app').classList.contains('show-side')) setPanel('show-side', false); });
 // Phone drawer scrim: a real element (not a pseudo-element) so a tap on the dimmed area closes the drawer.
 $('#sideScrim').addEventListener('click', () => { setPanel('show-side', false); $('#menuBtn')?.focus(); });
-$('#newKbd').textContent = `${MOD} K`;
+$('#searchKbd').textContent = `${MOD} K`;
+$('#search').addEventListener('input', (e) => { S.query = e.target.value; renderSessions(); });
+$('#search').addEventListener('keydown', (e) => { if (e.key === 'Enter') { const first = $('#sessions [data-room]'); if (first) { e.preventDefault(); openRoom(first.dataset.room); } } });
 
 /* ================= live events ================= */
 let doctorOnce = false;
 async function load() {
   const st = await api('/api/state');
-  Object.assign(S, { models: st.models, efforts: st.efforts, limits: st.limits || {}, settings: st.settings || {} });
-  S.seats = {}; S.order = []; st.seats.forEach((s) => { S.seats[s.id] = s; S.order.push(s.id); });
-  S.rooms = {}; st.rooms.forEach((r) => { S.rooms[r.id] = r; });
+  Object.assign(S, { models: st.models || {}, efforts: st.efforts || {}, limits: st.limits || {}, settings: st.settings || {} });
+  S.seats = {}; S.order = []; (st.seats || []).forEach((s) => { S.seats[s.id] = s; S.order.push(s.id); });
+  S.rooms = {}; (st.rooms || []).forEach((r) => { S.rooms[r.id] = { messages: [], ...r }; });
   const prev = S.active, saved = ls.get('ob.room'); if (!S.rooms[S.active]) S.active = S.rooms[saved] ? saved : null;
-  $('#project').textContent = st.project; $('#project').title = st.project;
+  $('#project').textContent = st.project || ''; $('#project').title = st.project ? `Project: ${st.project}` : '';
   renderMeters(); noteLimitErrors(true); renderSessions(); renderAgents();
   // Local environment check, once per page load: first run shows it as onboarding; later only problems are shown.
   if (!doctorOnce) { doctorOnce = true; runDoctor(); }
@@ -934,8 +1112,58 @@ async function load() {
   // reconnect to the same room: keep the feed (and its scroll), refresh what may have changed
   const r = S.rooms[S.active];
   renderRoomHead(); renderResultBar(); if ($('#composerArea')?.dataset.mode !== composerMode(r)) renderComposer();
-  r.messages.forEach((m) => paintMsg(m, false)); markResult(); renderInspector();
+  r.messages.forEach((m) => paintMsg(m, false)); markResult(); decorate(); renderInspector();
 }
+// One handler per SSE event type. Unknown types (a newer server) are ignored; a bad event never stops the stream.
+const SSE = {
+  hello: () => { load().catch(() => {}); },
+  seat: (ev) => {
+    if (!ev.seat?.id) return;
+    const old = S.seats[ev.seat.id], isNew = !old; S.seats[ev.seat.id] = ev.seat; if (isNew) S.order.push(ev.seat.id);
+    if (old && old.status !== ev.seat.status) {
+      if (ev.seat.status === 'working') announce(`${ev.seat.name} started: ${ev.seat.activity || 'working'}`);
+      else if (old.status === 'working') announce(`${ev.seat.name} ${ev.seat.status === 'error' ? 'failed' : 'finished'}`);
+    } else if (old && ev.seat.status === 'working' && /^retrying/i.test(ev.seat.activity || '') && old.activity !== ev.seat.activity) announce(`${ev.seat.name}: ${ev.seat.activity}`);
+    renderAgents(); scheduleInspector();
+    const r = S.rooms[S.active], m = r?.messages?.find((x) => x.streaming && x.seatId === ev.seat.id); if (m) paintMsg(m);
+  },
+  seatGone: (ev) => { delete S.seats[ev.id]; S.order = S.order.filter((x) => x !== ev.id); renderAgents(); },
+  room: (ev) => {
+    if (!ev.room?.id) return;
+    const old = S.rooms[ev.room.id], r = S.rooms[ev.room.id] = { ...(old || { messages: [] }), ...ev.room };
+    if (old && old.status === 'running' && r.status !== 'running' && (r.kind !== 'dm' || document.hidden)) {
+      const msg = `${r.title}: ${STATUS[r.status] || r.status}`; toast(msg); notify(APP, msg);
+    }
+    renderSessions();
+    if (r.id === S.active) {
+      // The POST that created a room can return before this event: build the view once it is known.
+      if (!$('#main .main-head')) renderRoom();
+      else { renderRoomHead(); renderResultBar(); if ($('#composerArea')?.dataset.mode !== composerMode(r)) renderComposer(); markResult(); decorate(); }
+      scheduleInspector();
+      if (!old) document.title = `${r.title} · ${APP}`;
+    } else if (!S.active && !old) renderHome(); // first session ever: the home page loses its first-run framing
+  },
+  roomGone: (ev) => { delete S.rooms[ev.id]; if (S.active === ev.id) openRoom(null); else renderSessions(); },
+  msg: (ev) => {
+    const r = S.rooms[ev.roomId]; if (!r || !ev.msg?.id) return; // unknown room: its 'room' event / next load brings it
+    const i = r.messages.findIndex((x) => x.id === ev.msg.id); if (i >= 0) r.messages[i] = ev.msg; else r.messages.push(ev.msg);
+    if (!ev.msg.streaming && tw[ev.msg.id] && !tw[ev.msg.id].pending) delete tw[ev.msg.id];
+    if (ev.roomId === S.active) { paintMsg(ev.msg); scheduleInspector(); }
+  },
+  delta: (ev) => { if (ev.runId) (tw[ev.runId] ||= { shown: '', pending: '' }).pending += ev.text || ''; },
+  item: (ev) => {
+    const box = ev.runId && document.querySelector(`#feedInner [data-id="${CSS.escape(ev.runId)}"] .tools`);
+    if (!box || !ev.text) return;
+    const prefix = ev.kind === 'tool' ? '› ' : ev.kind === 'retry' ? '↻ ' : null; // reasoning and other kinds stay out of the transcript
+    if (prefix === null) return;
+    const d = document.createElement('div'); d.textContent = prefix + ev.text; box.append(d);
+    while (box.children.length > 4) box.firstElementChild.remove();
+  },
+  limits: (ev) => { S.limits = ev.limits || {}; renderMeters(); noteLimitErrors(); renderBanner(); },
+  settings: (ev) => { S.settings = ev.settings || {}; },
+  cli: (ev) => { S.cli = ev.cli || null; },
+  run: () => {}, end: () => {},
+};
 let lastAuthCheck = 0, everConnected = false;
 function connect() {
   const es = new EventSource('/api/events');
@@ -946,52 +1174,10 @@ function connect() {
     if (!gated && Date.now() - lastAuthCheck > 10000) { lastAuthCheck = Date.now(); fetch('/api/state', { credentials: 'same-origin' }).then((r) => { if (r.status === 401) authGate(); }).catch(() => {}); }
   };
   es.onmessage = (e) => {
-    const ev = JSON.parse(e.data);
-    switch (ev.t) {
-      case 'hello': return load().catch(() => {});
-      case 'seat': {
-        const old = S.seats[ev.seat.id], isNew = !old; S.seats[ev.seat.id] = ev.seat; if (isNew) S.order.push(ev.seat.id);
-        if (old && old.status !== ev.seat.status) {
-          if (ev.seat.status === 'working') announce(`${ev.seat.name} started: ${ev.seat.activity || 'working'}`);
-          else if (old.status === 'working') announce(`${ev.seat.name} ${ev.seat.status === 'error' ? 'failed' : 'finished'}`);
-        }
-        renderAgents(); scheduleInspector();
-        const r = S.rooms[S.active], m = r?.messages?.find((x) => x.streaming && x.seatId === ev.seat.id); if (m) paintMsg(m);
-        break;
-      }
-      case 'seatGone': delete S.seats[ev.id]; S.order = S.order.filter((x) => x !== ev.id); renderAgents(); break;
-      case 'room': {
-        const old = S.rooms[ev.room.id], r = S.rooms[ev.room.id] = { ...(old || { messages: [] }), ...ev.room };
-        if (old && old.status === 'running' && r.status !== 'running' && (r.kind !== 'dm' || document.hidden)) {
-          const msg = `${r.title}: ${STATUS[r.status] || r.status}`; toast(msg); notify('Orchestra Board', msg);
-        }
-        renderSessions();
-        if (r.id === S.active) {
-          // The POST that created a room can return before this event: build the view once it is known.
-          if (!$('#main .head')) renderRoom();
-          else { renderRoomHead(); renderResultBar(); if ($('#composerArea')?.dataset.mode !== composerMode(r)) renderComposer(); markResult(); }
-          scheduleInspector();
-          if (!old) document.title = `${r.title} · Orchestra Board`;
-        } else if (!S.active && !old) renderHome(); // first session ever: the home page loses its first-run framing
-        break;
-      }
-      case 'roomGone': delete S.rooms[ev.id]; if (S.active === ev.id) openRoom(null); else renderSessions(); break;
-      case 'msg': {
-        const r = S.rooms[ev.roomId]; if (!r) break; // unknown room: its 'room' event / next load brings it
-        const i = r.messages.findIndex((x) => x.id === ev.msg.id); if (i >= 0) r.messages[i] = ev.msg; else r.messages.push(ev.msg);
-        if (!ev.msg.streaming && tw[ev.msg.id] && !tw[ev.msg.id].pending) delete tw[ev.msg.id];
-        if (ev.roomId === S.active) { paintMsg(ev.msg); scheduleInspector(); }
-        break;
-      }
-      case 'delta': (tw[ev.runId] ||= { shown: '', pending: '' }).pending += ev.text; break;
-      case 'item': {
-        const box = document.querySelector(`#feedInner [data-id="${ev.runId}"] .tools`);
-        if (box && ev.kind === 'tool') { box.insertAdjacentHTML('beforeend', `<div>› ${esc(ev.text)}</div>`); while (box.children.length > 4) box.firstElementChild.remove(); }
-        break;
-      }
-      case 'limits': S.limits = ev.limits; renderMeters(); noteLimitErrors(); renderBanner(); break;
-      case 'settings': S.settings = ev.settings; break;
-    }
+    let ev; try { ev = JSON.parse(e.data); } catch { return; }
+    const h = ev && Object.prototype.hasOwnProperty.call(SSE, ev.t) ? SSE[ev.t] : null;
+    if (!h) return;
+    try { h(ev); } catch (err) { console.warn(`orchestra: could not apply "${ev.t}" event`, err); }
   };
 }
 renderConn(); connect(); twLoop();

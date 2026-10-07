@@ -31,7 +31,7 @@ before(() => {
   const broadcast = (e) => events.push(e);
   limits = createLimits({ store, broadcast });
   seats = createSeats({ store, broadcast });
-  runner = createRunner({ store, seats, limits, settings: { lang: 'English' }, broadcast });
+  runner = createRunner({ store, seats, limits, settings: { lang: 'English' }, broadcast, retryDelaysMs: [20, 40] });
 });
 after(async () => {
   for (const s of seats.all()) if (seats.rtOf(s.id).child) runner.stopSeat(s.id);
@@ -52,7 +52,7 @@ testWithFake(fake, 'claude turn: result text, net/cached/cost accounting, thread
   assert.equal(call.args[call.args.indexOf('--model') + 1], 'claude-sonnet-5-5');
   assert.equal(call.args[call.args.indexOf('--effort') + 1], 'medium');
   assert.deepEqual(call.tools, ['Read', 'Grep', 'Glob']);
-  assert.equal(call.permissionMode, null);
+  assert.equal(call.permissionMode, 'dontAsk', 'read turns never wait for a permission prompt');
   assert.ok(call.args.includes('--strict-mcp-config'), 'lean flags');
   assert.ok(samePath(call.cwd, store.project), `cwd ${call.cwd} is the project ${store.project}`); // realpath-based: macOS /var -> /private/var
   // Thread: the runner mints the session id, the CLI echoes it, the seat remembers it.
@@ -121,12 +121,20 @@ testWithFake(fake, 'an exit without a completed turn fails with the stderr tail 
   assert.equal(end.ok, false); assert.equal(end.error, res.error);
 });
 
-testWithFake(fake, 'claude is_error result and codex turn.failed fail the turn with the CLI message', async () => {
+testWithFake(fake, 'claude is_error result and codex turn.failed fail the turn with the CLI message (transient ones after 2 retries)', async () => {
   fake.scenario([{ seat: 'Ada', error: 'API Error: 529 overloaded' }, { seat: 'Bob', error: 'stream disconnected' }]);
+  let before = fake.calls().length;
   const a = await runner.runSeat('ada', 'go');
-  assert.equal(a.ok, false); assert.match(a.error, /529 overloaded/);
+  assert.equal(a.ok, false); assert.match(a.error, /529 overloaded/); assert.equal(a.failure, 'transient');
+  assert.equal(fake.calls().length - before, 3, 'first try + 2 retries');
+  before = fake.calls().length;
   const b = await runner.runSeat('bob', 'go');
   assert.equal(b.ok, false); assert.match(b.error, /stream disconnected/);
+  assert.equal(fake.calls().length - before, 3);
+  fake.scenario([{ seat: 'Ada', error: 'Something else broke' }]);
+  before = fake.calls().length;
+  const c = await runner.runSeat('ada', 'go');
+  assert.equal(c.ok, false); assert.equal(c.failure, 'other'); assert.equal(fake.calls().length - before, 1, 'a non-transient error is not retried');
 });
 
 testWithFake(fake, 'token budget blocks the turn before any spawn', async () => {
@@ -140,7 +148,7 @@ testWithFake(fake, 'tools: write is downgraded to read for read seats; write sea
   fake.scenario({ default: { reply: 'ok' } });
   await runner.runSeat('ada', 'edit please', { tools: 'write' });
   let [c] = fake.calls().slice(-1);
-  assert.equal(c.permissionMode, null); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob']);
+  assert.equal(c.permissionMode, 'dontAsk'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob']);
   await runner.runSeat('wri', 'edit please', { tools: 'write' });
   [c] = fake.calls().slice(-1);
   assert.equal(c.permissionMode, 'acceptEdits'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob', 'Edit', 'Write']);

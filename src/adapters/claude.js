@@ -1,21 +1,24 @@
 // Claude CLI adapter: `claude -p --output-format stream-json` arguments and stream parsing.
-const { CLAUDE_LEAN, CLAUDE_TOOLS, CLAUDE_PROBE_MODEL } = require('../config');
+const { CLAUDE_LEAN, CLAUDE_TOOLS, CLAUDE_PROBE_MODEL, claudeLean } = require('../config');
 const { clip } = require('../util');
 const { createFeeder } = require('./jsonl');
 
 // Claude sessions are stored per project dir, so resume needs a stable cwd (the caller passes PROJECT).
+// Permission mode: a write seat auto-approves edits (acceptEdits); read and none turns run with dontAsk, so a tool
+// outside the allowed list is denied instead of waiting for a prompt nobody can answer in -p mode.
+// --tools takes a variable number of values, so it must stay the last flag (the prompt goes on stdin).
 function buildArgs({ model, effort, thread = null, sessionId = null, addDir = null, mode = 'read' }) {
-  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model, '--effort', effort, ...CLAUDE_LEAN];
+  const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', '--model', model, '--effort', effort, ...claudeLean()];
   if (thread) args.push('--resume', thread); else if (sessionId) args.push('--session-id', sessionId);
   if (addDir) args.push('--add-dir', addDir);
-  if (mode === 'write') args.push('--permission-mode', 'acceptEdits');
-  args.push('--tools', ...CLAUDE_TOOLS[mode]);
+  args.push('--permission-mode', mode === 'write' ? 'acceptEdits' : 'dontAsk');
+  args.push('--tools', ...(CLAUDE_TOOLS[mode] || CLAUDE_TOOLS.read));
   return args;
 }
 
-// Minimal no-tools call whose only purpose is the rate_limit_event.
+// Minimal no-tools call whose only purpose is the rate_limit_event. No --effort: Haiku does not take one.
 function buildProbeArgs() {
-  return ['-p', '--output-format', 'stream-json', '--verbose', '--model', CLAUDE_PROBE_MODEL, '--effort', 'low', '--no-session-persistence', ...CLAUDE_LEAN, '--tools', ''];
+  return ['-p', '--output-format', 'stream-json', '--verbose', '--model', CLAUDE_PROBE_MODEL, '--no-session-persistence', ...CLAUDE_LEAN, '--tools', ''];
 }
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);

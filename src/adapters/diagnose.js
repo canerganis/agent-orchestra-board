@@ -57,4 +57,47 @@ function explainExit({ agent, bin, code, signal, stats = {}, stderr = '', versio
   return `${name} CLI ended (${exit}) before reporting a result${stats.unknown ? ` (${stats.unknown} unknown event(s): ${stats.unknownTypes.join(', ')})` : ''}${why}`;
 }
 
-module.exports = { spawnErrorMessage, explainExit, findShim, lastLine, label };
+// --- Failure classification (runner retry / recovery policy) -------------------------------------------------
+// Login problems: Claude's result `is_error` text ("Not logged in · Please run /login", "Invalid API key",
+// "OAuth token has expired"), Claude in bare mode (no OAuth, API key only), Codex "Not logged in" / 401.
+// HTTP status codes count only in context ("status 401", "API Error: 503", "429 Too Many Requests"), never as a bare
+// number: our own diagnostics contain counts ("500 JSON line(s)").
+const AUTH = /not logged in|please (run \/login|log ?in)|run \/login|login required|log in again|invalid (api[ _-]?key|x-api-key|bearer|token)|authenticat(ion|e) (failed|error|required)|authentication_error|unauthori[sz]ed|(status( code)?|api error|http\/?[\d.]*)[:=]?\s*401\b|oauth token (has )?(expired|revoked|invalid)|token (has )?expired|no (api key|credentials|auth)|missing (api key|credentials)|credentials? (not found|missing|expired)|codex login|bare mode/i;
+// Resumed thread that the CLI no longer has (deleted, expired, different cwd/home), anchored to the CLIs' own
+// messages. Claude: "No conversation found with session ID: <id>"; Codex: "no rollout found for thread id <id>".
+// A looser "thread/session … not found" only counts when it names the id that was resumed: an error that merely
+// mentions a thread ("thread/start failed: model x does not exist", "thread 'main' panicked … not found") must not
+// throw a valid thread away.
+const RESUME = /no conversation found with session id|no rollout found for (thread|conversation|session)( id)?/i;
+const RESUME_LOOSE = /(session|thread|rollout|conversation)( id)?[^\n]{0,60}(not found|does not exist|expired|unknown)|(not found|unknown|invalid|expired)[^\n]{0,20}(session|thread|rollout|conversation)|could not (find|load|resume)|failed to (resume|load|find)/i;
+// Worth retrying the same turn: rate limits, overload, 429/5xx, network resets. Plan usage limits that reset in
+// hours ("usage limit reached", quota, billing) are not: a retry seconds later fails the same way. A short-lived
+// limit ("tokens per min … try again in 1.2s") is transient even when it also says "limit reached".
+const STATUS = /(status( code)?|api error|http\/?[\d.]*|error)[:=]?\s*(429|5\d\d)\b|\b(429|5\d\d)\s+(too many requests|internal server error|bad gateway|service unavailable|gateway time-?out|overloaded)/i;
+const TRANSIENT = /rate[ _-]?limit(ed)?|too many requests|overloaded|insufficient capacity|internal server error|bad gateway|service unavailable|gateway time-?out|temporarily unavailable|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|EPIPE|EAI_AGAIN|ENETUNREACH|ENETDOWN|EHOSTUNREACH|socket hang up|fetch failed|network (error|is unreachable)|connection (reset|refused|closed|error|lost|aborted)|stream (disconnected|error|closed)|disconnected before|request timed? ?out|timed out waiting|api_error|server_error/i;
+const NOT_TRANSIENT = /usage limit|quota|credit balance|billing|insufficient_quota/i;
+const SHORT_LIMIT = /per min(ute)?\b|\b(TPM|RPM)\b|try again in\s*[\d.]+\s*(ms|s|sec|secs|seconds?)\b/i;
+const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// -> 'auth' | 'resume' | 'transient' | 'other'. text: the turn's error plus the stderr tail.
+// resumed: the turn resumed an existing thread (only then can a thread-not-found mean a lost thread);
+// thread: that thread's id (lets a looser not-found message count when it names this id).
+function classifyFailure(text, { resumed = false, thread = null } = {}) {
+  const s = String(text || '').replace(ANSI, '');
+  if (AUTH.test(s)) return 'auth';
+  if (resumed && (RESUME.test(s) || (thread && RESUME_LOOSE.test(s) && new RegExp(escapeRe(thread), 'i').test(s)))) return 'resume';
+  if ((TRANSIENT.test(s) || STATUS.test(s)) && (!NOT_TRANSIENT.test(s) || SHORT_LIMIT.test(s))) return 'transient';
+  return 'other';
+}
+
+// One actionable sentence for a login problem.
+// detail: the CLI's error message; context: more text to look at (the stderr tail).
+function authMessage(agent, detail = '', context = '') {
+  const d = lastLine(detail).slice(0, 200);
+  const why = d ? ` (${d})` : '';
+  if (agent === 'codex') return `Codex CLI is not logged in${why}. Run \`codex login\` once in a terminal, then try again.`;
+  if (/bare mode/i.test(`${detail}\n${context}`)) return `Claude CLI runs in bare mode without your claude.ai login${why}. Unset the bare-mode setting (or set ANTHROPIC_API_KEY), or run \`claude\` once to log in, then try again.`;
+  return `Claude CLI is not logged in${why}. Run \`claude\` once to log in, then try again.`;
+}
+
+module.exports = { spawnErrorMessage, explainExit, findShim, lastLine, label, classifyFailure, authMessage };

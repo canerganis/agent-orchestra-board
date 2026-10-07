@@ -2,7 +2,7 @@
 
 ## Threat model
 
-Orchestra Board is a local tool. It listens on `127.0.0.1` only and spawns the `claude` and `codex` CLIs under your own user account and your own logins. The things it protects are:
+Agent Orchestra Board is a local tool. It listens on `127.0.0.1` only and spawns the `claude` and `codex` CLIs under your own user account and your own logins. The things it protects are:
 
 1. **Your files.** Seats are read-only unless you set `perm: write`. Write seats get Claude `--permission-mode acceptEdits` with `Read/Grep/Glob/Edit/Write`, or Codex `sandbox_mode=workspace-write`. The confinement differs: a Codex write seat's sandbox cwd is its target directory, so edits stay inside it; a Claude write seat always runs with the project root as cwd, so `acceptEdits` auto-approves edits to **any file in the project**, and its target is only a prompt instruction. Read turns can read the whole project in both cases (and the Codex read-only sandbox can read outside it).
 2. **Your browser as an attack path.** The attacker is a web page you have open, not someone on the network. Every request must carry a `Host` of exactly `localhost:<port>`, `127.0.0.1:<port>` or `[::1]:<port>` (DNS rebinding), any `Origin` must be `http://` one of those (cross-site fetch/XHR), and `POST` bodies must be `application/json` (no simple-form CSRF), at most 1 MB, with every field type- and length-checked. On top of that, every `/api/*` request needs the session cookie: a random 192-bit token, stored per project in `<project>/.orchestra/session` (mode 0600) and printed in the start URL, exchanged on first load for an `HttpOnly; SameSite=Strict` session cookie named per port, compared in constant time. Responses carry a strict CSP (`default-src 'self'`, no framing, no external connections), `nosniff`, `no-referrer` and `no-store`. Static files are served only from `public/` after `path.resolve` and a prefix check.
@@ -29,4 +29,4 @@ Include: the version or commit, your OS, the request or steps that reproduce it,
 - Treat the printed start URL like a password for that project: do not paste it into chats or screenshots. It stays valid across restarts; delete `<project>/.orchestra/session` to rotate it.
 - Keep write seats pointed at a directory you can `git diff` and revert, and remember that a Claude write seat can edit anywhere in the project regardless of its target.
 - Commit or ignore `<project>/.orchestra/` deliberately: room transcripts can contain file contents a scout read. `.orchestra/session` holds the board's session token and must never be committed; the board writes a `.orchestra/.gitignore` listing it on first start (do not remove that entry).
-- Run `orchestra-board doctor` after upgrading either CLI; adapters parse undocumented stream formats.
+- Run `agent-orchestra-board doctor` (or `node bin/agent-orchestra-board.js doctor`) after upgrading either CLI; adapters parse undocumented stream formats.

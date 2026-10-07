@@ -5,7 +5,7 @@ const path = require('path');
 const { claudeBin } = require('./config');
 const { killTree, spawnResolved } = require('./platform'); // the probe's cwd is the temp dir: resolve claude on PATH first
 const claude = require('./adapters/claude');
-const { spawnErrorMessage, explainExit } = require('./adapters/diagnose');
+const { spawnErrorMessage, explainExit, classifyFailure, authMessage } = require('./adapters/diagnose');
 const { now } = require('./util');
 
 const PROBE_TIMEOUT_MS = 90000;
@@ -26,12 +26,28 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
     limits[agent] = { ...prev, error: String(message), errorAt: now() };
     store.writeJson('limits.json', limits); broadcast({ t: 'limits', limits });
   }
+  // rate_limit_info fields are undocumented and often partial: any of them may be missing. resetsAt is epoch seconds
+  // (ms or an ISO string tolerated). An event that carries no usable window keeps the windows already known.
+  const resetMs = (v) => {
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v > 1e12 ? v : v * 1000;
+    if (typeof v === 'string' && v) { const n = Number(v); if (Number.isFinite(n) && n > 0) return n > 1e12 ? n : n * 1000; const d = Date.parse(v); return Number.isFinite(d) ? d : null; }
+    return null;
+  };
+  const pctOf = (u) => (typeof u === 'number' && Number.isFinite(u) ? Math.round(u * 1000) / 10 : null);
   function claudeLimits(info) {
-    if (!info || typeof info !== 'object') return;
+    if (!info || typeof info !== 'object' || Array.isArray(info)) return;
     const wins = {};
-    for (const [k, v] of Object.entries(info.unifiedWindows || {})) if (v && typeof v.utilization === 'number') wins[k] = { pct: Math.round(v.utilization * 1000) / 10, resetsAt: v.resetsAt ? v.resetsAt * 1000 : null };
-    if (!Object.keys(wins).length && info.rateLimitType) wins[info.rateLimitType] = { pct: Math.round((info.utilization || 0) * 1000) / 10, resetsAt: info.resetsAt ? info.resetsAt * 1000 : null };
-    setLimits('claude', { windows: wins, status: info.status, overage: !!info.isUsingOverage });
+    const uw = info.unifiedWindows && typeof info.unifiedWindows === 'object' ? info.unifiedWindows : {};
+    for (const [k, v] of Object.entries(uw)) if (v && typeof v === 'object' && pctOf(v.utilization) !== null) wins[k] = { pct: pctOf(v.utilization), resetsAt: resetMs(v.resetsAt) };
+    if (!Object.keys(wins).length && typeof info.rateLimitType === 'string' && info.rateLimitType && pctOf(info.utilization) !== null) wins[info.rateLimitType] = { pct: pctOf(info.utilization), resetsAt: resetMs(info.resetsAt) };
+    const prev = limits.claude && typeof limits.claude === 'object' ? limits.claude : {};
+    const known = Object.keys(wins).length > 0;
+    if (!known && typeof info.status !== 'string' && info.isUsingOverage == null) return; // nothing usable
+    setLimits('claude', {
+      windows: known ? wins : prev.windows || {},
+      status: typeof info.status === 'string' ? info.status : prev.status,
+      overage: info.isUsingOverage != null ? !!info.isUsingOverage : !!prev.overage,
+    });
   }
   function newestFile(dir, depth) {
     let ents; try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
@@ -41,6 +57,14 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
       if (depth === 0 && e.isFile() && e.name.endsWith('.jsonl')) return ents.filter((x) => x.e.isFile() && x.e.name.endsWith('.jsonl')).map((x) => x.p).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
     }
     return null;
+  }
+  // rate_limits is one {primary, secondary, plan_type, limit_id?} object; newer CLIs may tag it with a limit_id or
+  // report several limits (an array, or a map keyed by limit id). Prefer the "codex" limit, else the first one.
+  function pickCodexLimits(rl) {
+    const isLim = (x) => x && typeof x === 'object' && !Array.isArray(x) && ('primary' in x || 'secondary' in x);
+    if (isLim(rl)) return rl;
+    const list = Array.isArray(rl) ? rl.filter(isLim) : rl && typeof rl === 'object' ? Object.entries(rl).filter(([, v]) => isLim(v)).map(([k, v]) => ({ limit_id: k, ...v })) : [];
+    return list.find((x) => x.limit_id === 'codex') || list[0] || null;
   }
   let codexLimitFile = null, codexLimitMtime = 0;
   // Same home as the CLI (and as doctor): CODEX_HOME when set, else ~/.codex.
@@ -53,11 +77,18 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i].includes('"rate_limits"')) continue;
       let rl; try { rl = JSON.parse(lines[i]).payload?.rate_limits; } catch { continue; } // a half-written last line is skipped
-      if (!rl || typeof rl !== 'object') continue;
-      const win = (w) => w && { pct: w.used_percent, minutes: w.window_minutes, resetsAt: w.resets_at ? w.resets_at * 1000 : null };
+      rl = pickCodexLimits(rl);
+      if (!rl) continue;
       const wins = {};
-      for (const w of [rl.primary, rl.secondary].filter((w) => w && typeof w === 'object')) wins[w.window_minutes >= 10080 ? 'seven_day' : w.window_minutes >= 300 ? 'five_hour' : `${w.window_minutes}m`] = win(w);
-      return setLimits('codex', { windows: wins, plan: rl.plan_type, reached: rl.rate_limit_reached_type });
+      // Tolerant: secondary may be null, a window may lack window_minutes / resets_at, used_percent may be missing.
+      for (const w of [rl.primary, rl.secondary]) {
+        if (!w || typeof w !== 'object' || typeof w.used_percent !== 'number') continue;
+        const mins = typeof w.window_minutes === 'number' && w.window_minutes > 0 ? w.window_minutes : null;
+        const key = mins === null ? (wins.primary ? 'secondary' : 'primary') : mins >= 10080 ? 'seven_day' : mins >= 300 ? 'five_hour' : `${mins}m`;
+        wins[key] = { pct: w.used_percent, minutes: mins, resetsAt: resetMs(w.resets_at) };
+      }
+      if (!Object.keys(wins).length && rl.plan_type === undefined) continue;
+      return setLimits('codex', { windows: wins, plan: rl.plan_type ?? null, reached: rl.rate_limit_reached_type ?? null, ...(typeof rl.limit_id === 'string' ? { limitId: rl.limit_id } : {}) });
     }
   }
   const refreshCodex = () => { try { readCodexLimits(); } catch {} };
@@ -90,7 +121,7 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
         let error = null;
         if (spawnErr) error = spawnErr;
         else if (got) error = null; // the windows were recorded even if the turn then failed
-        else if (turnError) error = `Claude limits probe failed: ${turnError}`;
+        else if (turnError) error = `Claude limits probe failed: ${classifyFailure(`${turnError}\n${stderr}`) === 'auth' ? authMessage('claude', turnError, stderr) : turnError}`;
         else if (completed) error = 'Claude limits probe completed but got no rate_limit_event: the Claude CLI reports subscription usage windows only for a claude.ai login (API-key and cloud-provider logins have no such windows).';
         else error = `Claude limits probe got no rate_limit_event: ${explainExit({ agent: 'claude', bin, code, signal, stats: parser.stats, stderr })}`;
         if (error) setError('claude', error);
