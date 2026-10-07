@@ -149,8 +149,12 @@ async function stopApp(app) {
 }
 
 // Declares a test that is skipped (with the reason) when the fake CLI could not be built on this machine.
+// On GitHub Actions the same situation fails instead, so a runner without csc.exe cannot pass with silent skips.
 const testWithFake = (fake, name, opts, fn) => {
   if (typeof opts === 'function') { fn = opts; opts = {}; }
+  if (fake.skipReason && process.env.GITHUB_ACTIONS) {
+    return test(name, { timeout: 30000, ...opts }, () => { throw new Error(`fake CLI unavailable on CI: ${fake.skipReason}`); });
+  }
   return test(name, { timeout: 30000, ...opts, skip: fake.skipReason || false }, fn);
 };
 

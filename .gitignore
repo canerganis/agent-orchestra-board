@@ -2,3 +2,4 @@ node_modules/
 .orchestra/
 *.log
 .DS_Store
+.sol_task_path

@@ -6,13 +6,13 @@ const { PassThrough } = require('stream');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const { createFeeder } = require('./jsonl');
-const claude = require('./claude');
-const codex = require('./codex');
-const { detectVersion } = require('./versions');
-const { spawnErrorMessage, explainExit, findShim } = require('./diagnose');
-const { createRunner } = require('../runner');
-const { createLimits } = require('../limits');
+const { createFeeder } = require('../src/adapters/jsonl');
+const claude = require('../src/adapters/claude');
+const codex = require('../src/adapters/codex');
+const { detectVersion } = require('../src/adapters/versions');
+const { spawnErrorMessage, explainExit, findShim } = require('../src/adapters/diagnose');
+const { createRunner } = require('../src/runner');
+const { createLimits } = require('../src/limits');
 
 function collect(adapter) {
   const events = [];

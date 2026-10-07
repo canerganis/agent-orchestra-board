@@ -1,4 +1,4 @@
-// CLI entry (bin/orchestra-board.js) and the legacy `node server.js [projectDir] [port]` shim: argument parsing,
+// CLI entry (bin/agent-orchestra-board.js) and the legacy `node server.js [projectDir] [port]` shim: argument parsing,
 // real process launch on test ports 4395/4396 with unlaunchable CLI names, doctor --json, --help.
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { tmpDir, rmrf, waitFor, request, samePath, freePort } = require('./helpers');
-const { parseArgs } = require('../bin/orchestra-board');
+const { parseArgs } = require('../bin/agent-orchestra-board');
 
 const ROOT = path.join(__dirname, '..');
 // Child processes get an empty home so neither the board's limits poller nor `doctor` reads the real ~/.codex or ~/.claude.
@@ -85,7 +85,7 @@ test('`orchestra-board <project> --port <n>` wins over $PORT; the board binds on
   // $PORT must name a port nobody binds during this test: in-process suites never fall back into the CLI half
   // (helpers.APP_PORTS), and the launch below never takes it either (excluded from its candidates).
   const envPort = await freePort(4399);
-  const b = await launchOnFreePort(4396, (port) => ['bin/orchestra-board.js', project, '--port', String(port)], () => ({ ...ENV, PORT: String(envPort) }), { exclude: [envPort] });
+  const b = await launchOnFreePort(4396, (port) => ['bin/agent-orchestra-board.js', project, '--port', String(port)], () => ({ ...ENV, PORT: String(envPort) }), { exclude: [envPort] });
   const port = b.port;
   try {
     assert.equal(port, b.requested, '--port wins over $PORT'); assert.notEqual(port, envPort);
@@ -98,11 +98,11 @@ test('start: a missing project path or a file exits 2 with a clear message and c
   const base = tmpDir('ob-cli-');
   try {
     const missing = path.join(base, 'typo');
-    const r = spawnSync(process.execPath, ['bin/orchestra-board.js', missing, '--port', '4399'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    const r = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', missing, '--port', '4399'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 25000 });
     assert.equal(r.status, 2, r.stdout + r.stderr); assert.match(r.stderr, /project directory does not exist/);
     assert.equal(fs.existsSync(missing), false, 'the typo is not created');
     const file = path.join(base, 'notes.txt'); fs.writeFileSync(file, 'x');
-    const r2 = spawnSync(process.execPath, ['bin/orchestra-board.js', file, '--port', '4399'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    const r2 = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', file, '--port', '4399'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 25000 });
     assert.equal(r2.status, 2, r2.stdout + r2.stderr); assert.match(r2.stderr, /not a directory/);
     assert.deepEqual(fs.readdirSync(base), ['notes.txt'], 'nothing else appeared next to it');
   } finally { rmrf(base); }
@@ -111,7 +111,7 @@ test('start: a missing project path or a file exits 2 with a clear message and c
 test('`orchestra-board doctor --json` prints a JSON report with a checks array and never starts a model call', { timeout: 30000 }, () => {
   const project = tmpDir('ob-cli-');
   try {
-    const r = spawnSync(process.execPath, ['bin/orchestra-board.js', 'doctor', project, '--json'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    const r = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', 'doctor', project, '--json'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true, timeout: 25000 });
     const json = JSON.parse(r.stdout.slice(r.stdout.indexOf('{')));
     assert.ok(Array.isArray(json.checks));
     for (const c of json.checks) assert.ok(c.id && c.name && ['ok', 'warn', 'fail', 'skip'].includes(c.status) && typeof c.detail === 'string', JSON.stringify(c));
@@ -120,7 +120,7 @@ test('`orchestra-board doctor --json` prints a JSON report with a checks array a
 });
 
 test('`orchestra-board --help` prints usage and exits 0', () => {
-  const r = spawnSync(process.execPath, ['bin/orchestra-board.js', '--help'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', '--help'], { cwd: ROOT, env: ENV, encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0);
   assert.match(r.stdout, /Usage: agent-orchestra-board \[projectDir\] \[--port <n>\] \[--open\]/);
   assert.match(r.stdout, /orchestra-board doctor/);

@@ -6,8 +6,6 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node >= 20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
 
-<!-- TODO: add docs/screenshot.png (a Debate in progress: workflow view, seats, usage meters), then add `![Agent Orchestra Board: a Debate in progress](docs/screenshot.png)` here. -->
-
 Zero dependencies, runs on your own CLI logins (no API keys), read-only seats in v0.1.
 
 ## What you get
@@ -76,7 +74,7 @@ The levers, all on by default:
 
 **What was measured:** the same 4-agent planning meeting (default seats: 1 Claude + 3 Codex, 2 rounds + synthesis, scout and facilitator among the four) ran once on the pre-redesign board and once on the token-lean board, 12 minutes apart. Total tokens went from **1,686,111 to 461,540 (-73%)**; the Claude-reported cost of the Claude turns went from $1.02 to $0.16.
 
-**Read this before quoting it.** It is **one run per arm on one machine** (Windows 11, Claude Code 2.1.291, Codex CLI 0.160.0, 2026-10-07), not a benchmark. The "before" ran on older code that is not in this repository and also had bugs fixed later, so the difference mixes the token levers with other changes. "Total" means every input token the CLIs reported, cache reads included, plus output; it is the only figure both runs have, because the old board stored one undivided count per turn. The after run was 204,374 uncached + 257,166 cached. Early stop did not fire in either run, and the after run predates the effort cap (Sol still ran round 2 at `high`). Output quality was not measured. My impression is that the scout brief was the biggest saving, but the levers were not measured separately. The trade-off: only the scout reads code, so a shallow brief misleads every seat, and the `file:line` citations in later rounds are copied from it, not re-checked.
+**Read this before quoting it.** It is **one run per arm on one machine** (Windows 11, Claude Code 2.1.291, Codex CLI 0.160.0, 2026-10-07), not a benchmark. The "before" ran on older code that is not in this repository and also had bugs fixed later, so the difference mixes the token levers with other changes. "Total" means every input token the CLIs reported, cache reads included, plus output; it is the only figure both runs have, because the old board stored one undivided count per turn. The after run was 204,374 uncached + 257,166 cached. Early stop did not fire in either run, and the after run predates the effort cap (the Sol seat, Architect on Codex, still ran round 2 at `high`). Output quality was not measured. My impression is that the scout brief was the biggest saving, but the levers were not measured separately. The trade-off: only the scout reads code, so a shallow brief misleads every seat, and the `file:line` citations in later rounds are copied from it, not re-checked.
 
 The raw rooms (sanitized) and a script that recomputes every number are in [docs/measurements/2026-10-07/](docs/measurements/2026-10-07/README.md). [bench/](bench/README.md) has a harness for a repeatable lean-vs-naive comparison (a second board started with `ORCHESTRA_NAIVE=1`, which reports `naive: true` in `GET /api/state`; see its README); no result from it has been published yet.
 
