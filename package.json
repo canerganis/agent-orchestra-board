@@ -1,0 +1,24 @@
+{
+  "name": "orchestra-board",
+  "version": "0.1.0",
+  "description": "Local control board that orchestrates Claude CLI and Codex CLI agents (seats) in debate, propose-review and direct chat workflows.",
+  "license": "MIT",
+  "main": "src/server.js",
+  "bin": {
+    "orchestra-board": "bin/orchestra-board.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public",
+    "server.js"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bin/orchestra-board.js",
+    "test": "node --test",
+    "doctor": "node bin/orchestra-board.js doctor"
+  }
+}
