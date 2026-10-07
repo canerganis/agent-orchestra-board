@@ -4,6 +4,11 @@
 // the CLI on the first turn, even for a read-only seat. These tests plant such files and prove they never run.
 // No real CLI is ever started: the planted files are copies of cmd.exe / sh scripts / the fake CLI, or plain garbage.
 const { test, before, after } = require('node:test');
+// Fake children own no OS handles and the CLI timers are unref()d, so on Node 20/22 the event loop can drain
+// mid-test and the runner cancels the test ("Promise resolution is still pending"). Keep one ref()d handle alive.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
+
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');

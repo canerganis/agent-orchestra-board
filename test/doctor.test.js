@@ -1,7 +1,12 @@
 // Doctor checks: binary resolution mirrors libuv (PATH only, .com/.exe; .cmd/.bat are shims), spawn failures
 // never reject, the state-directory probe never creates directories, token logins are recognised.
 // No real CLI is ever started: the only processes are fake .cmd files (through cmd.exe) and injected spawn stubs.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
+// Fake children own no OS handles and the CLI timers are unref()d, so on Node 20/22 the event loop can drain
+// mid-test and the runner cancels the test ("Promise resolution is still pending"). Keep one ref()d handle alive.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
+
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');

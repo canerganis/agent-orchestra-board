@@ -1,6 +1,11 @@
 // Board-level fixes without the real CLIs: shutdown spawns nothing new, a queued turn cancels at once, a corrupt
 // seats.json is kept aside, and user-facing hints name the right package. Every child is an in-process fake.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
+// Fake children own no OS handles and the CLI timers are unref()d, so on Node 20/22 the event loop can drain
+// mid-test and the runner cancels the test ("Promise resolution is still pending"). Keep one ref()d handle alive.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
+
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');

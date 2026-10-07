@@ -1,5 +1,10 @@
 // CLI robustness: JSONL splitting, unknown schemas, usage fallback, spawn errors, version detection (no real CLI).
-const { test } = require('node:test');
+const { test, after } = require('node:test');
+// Fake children own no OS handles and the CLI timers are unref()d, so on Node 20/22 the event loop can drain
+// mid-test and the runner cancels the test ("Promise resolution is still pending"). Keep one ref()d handle alive.
+const keepAlive = setInterval(() => {}, 1 << 30);
+after(() => clearInterval(keepAlive));
+
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
