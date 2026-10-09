@@ -5,8 +5,24 @@ const { httpError, now } = require('../util');
 
 const MAX_PLAN_TURNS = 2;
 const REVISIONS_KEPT = 20;
-const DIGEST_MESSAGES = 8;
-const DIGEST_CHARS = 1500;
+// The manager gets a short handoff, never the transcript: a long handoff rebuilds the context the scout saved.
+const DIGEST_MESSAGES = 4;
+const DIGEST_CHARS = 800;
+const SYNTHESIS_CHARS = 6000;
+
+// Context the manager gets from the debate: the synthesis when there is one (capped), else the last few agent notes.
+function debateDigest(room) {
+  const result = room.resultId ? room.messages.find((m) => m.id === room.resultId) : null;
+  if (result && result.text) {
+    const t = result.text.length > SYNTHESIS_CHARS ? result.text.slice(0, SYNTHESIS_CHARS) + '\n…(synthesis truncated)' : result.text;
+    return 'Debate synthesis:\n' + t;
+  }
+  const notes = room.messages
+    .filter((m) => m.seatId !== 'system' && m.seatId !== 'user' && !m.error && m.text)
+    .slice(-DIGEST_MESSAGES)
+    .map((m) => `${m.name}: ${m.text.slice(0, DIGEST_CHARS)}`);
+  return notes.length ? 'Debate notes:\n' + notes.join('\n\n') : '';
+}
 
 function createPlan({ store, seats, rooms, meeting }) {
   const { seatById } = seats;
@@ -24,16 +40,6 @@ function createPlan({ store, seats, rooms, meeting }) {
     room.approval = null;
   }
 
-  // Context the manager gets from the debate: the synthesis when there is one, else the last agent notes.
-  function debateDigest(room) {
-    const result = room.resultId ? room.messages.find((m) => m.id === room.resultId) : null;
-    if (result && result.text) return 'Debate synthesis:\n' + result.text;
-    const notes = room.messages
-      .filter((m) => m.seatId !== 'system' && m.seatId !== 'user' && !m.error && m.text)
-      .slice(-DIGEST_MESSAGES)
-      .map((m) => `${m.name}: ${m.text.slice(0, DIGEST_CHARS)}`);
-    return notes.length ? 'Debate notes:\n' + notes.join('\n\n') : '';
-  }
 
   // Drops item seats that no longer exist: a plan may name an agent that was deleted since the plan was written.
   function clearMissingSeats(plan) {
@@ -175,4 +181,4 @@ function createPlan({ store, seats, rooms, meeting }) {
   return { runPlan, approvePlan, editPlan, rejectPlan, isApproved, setRevision, MAX_PLAN_TURNS };
 }
 
-module.exports = { createPlan, MAX_PLAN_TURNS };
+module.exports = { createPlan, debateDigest, MAX_PLAN_TURNS, SYNTHESIS_CHARS };
