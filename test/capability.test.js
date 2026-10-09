@@ -41,7 +41,7 @@ function make(projectDir, opts = {}) {
   const seats = createSeats({ store, broadcast });
   let cap = null;
   const runner = createRunner({ store, seats, limits, settings: { lang: 'English' }, broadcast, retryDelaysMs: [], writeGate: (s, d) => cap.allowsWrite(s, d) });
-  cap = createCapability({ store, runner, seats, broadcast, platform: opts.platform, recordsDir: opts.recordsDir || recordsDirOf() });
+  cap = createCapability({ store, runner, seats, broadcast, platform: opts.platform, recordsDir: opts.recordsDir || recordsDirOf(), scratchRoot: opts.scratchRoot });
   const b = { store, seats, runner, cap, events };
   made.push(b);
   return b;
@@ -92,6 +92,20 @@ t('(a) a project folder that is not a git repository: writes unavailable with th
   for (const a of ['claude', 'codex']) assert.equal(st.agents[a].available, false);
   assert.equal(b.cap.cached(), st);
   assert.equal(b.cap.allowsWrite(b.seats.seatById('wcl'), b.store.project), false);
+});
+
+t('(c2) the write check passes when the temp root is spelled through a link (8.3 short names on Windows runners)', async (ctx) => {
+  const realRoot = path.join(dir, 'real-tmp'); fs.mkdirSync(realRoot, { recursive: true });
+  const linkRoot = path.join(dir, 'link-tmp');
+  try { fs.symlinkSync(realRoot, linkRoot, 'junction'); } catch (e) { return ctx.skip(`cannot create a link here: ${e.code}`); }
+  const project = path.join(dir, 'proj-link');
+  initRepo(project, { 'README.md': 'hello\n' });
+  G = make(project, { scratchRoot: linkRoot, recordsDir: path.join(dir, 'records-link') });
+  fake.scenario([WELL_BEHAVED]);
+  const out = await G.cap.verify('wcl');
+  assert.equal(out.result, 'pass', out.detail);
+  const call = lastCheckCall();
+  assert.ok(samePath(path.dirname(scratchOf(call)), realRoot), 'the scratch folder is spelled in its canonical form');
 });
 
 t('(b) a git project before any check: every agent is "not verified yet" and allowsWrite is false', async () => {
@@ -172,7 +186,7 @@ t('(c) a well-behaved CLI passes the write check: persisted, available, broadcas
 });
 
 // The tests below that need a failing write turn use the Claude seat (Codex never gets one), then re-verify.
-const reverifyClaude = async () => { fake.scenario([WELL_BEHAVED]); assert.equal((await G.cap.verify('wcl')).result, 'pass'); };
+const reverifyClaude = async () => { fake.scenario([WELL_BEHAVED]); const _v = await G.cap.verify('wcl'); assert.equal(_v.result, 'pass', JSON.stringify(_v)); };
 
 t('(d) a CLI that also writes outside its worktree fails the check and stays unavailable', async () => {
   fake.scenario([{ ...WELL_BEHAVED, writeFiles: [{ path: 'WRITE_CHECK_INSIDE.txt' }, { path: OUTSIDE_REL }], reply: 'STEP 1: done\nSTEP 2: done' }]);

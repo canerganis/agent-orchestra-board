@@ -38,7 +38,7 @@ function codexEnv(base = process.env) {
 // constructor switch that overrides it: codexWriteSupport() reads this binding, not an exported property.
 const CODEX_UNIX_WRITES = false;
 const CODEX_WINDOWS_WRITE_REASON = 'off: Codex file edits are off in v0.2 on every platform. Codex seats read, review and propose patches that the board applies.';
-const CODEX_UNIX_WRITE_REASON = 'off in v0.2: Codex file edits return on macOS and Linux after the write check covers shell writes and has passed on real machines. Codex seats can still read, review and propose.';
+const CODEX_UNIX_WRITE_REASON = CODEX_WINDOWS_WRITE_REASON;
 
 // Whether the board may ever give a Codex turn write access on `platform`: { ok, code, reason }. Fails closed.
 function codexWriteSupport(platform = process.platform) {

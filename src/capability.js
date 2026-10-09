@@ -276,7 +276,7 @@ function worktreeFingerprint(project, dir) {
 const relPosix = (from, to) => path.relative(from, to).split(path.sep).join('/');
 
 // platform and recordsDir are injectable for tests only; nothing (env var, setting, flag) wires them to user input.
-function createCapability({ store, runner, seats, broadcast = () => {}, platform = process.platform, recordsDir = defaultRecordsDir() }) {
+function createCapability({ store, runner, seats, broadcast = () => {}, platform = process.platform, recordsDir = defaultRecordsDir(), scratchRoot = null }) {
   let last = null;
   let probe = null; // { dir (canonical), seatId } while a write check runs
   let verifying = false;
@@ -433,7 +433,9 @@ function createCapability({ store, runner, seats, broadcast = () => {}, platform
 
       let head;
       try {
-        scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ob-writecheck-'));
+        scratch = fs.mkdtempSync(path.join(scratchRoot || os.tmpdir(), 'ob-writecheck-'));
+        // Canonical spelling (8.3 short names and links resolved) so every derived path agrees with the worktree's.
+        try { scratch = fs.realpathSync.native(scratch); } catch {}
         repo = path.join(scratch, 'repo');
         fs.mkdirSync(path.join(repo, '.orchestra'), { recursive: true });
         fs.writeFileSync(path.join(repo, 'README.md'), 'Write check repository (temporary).\n');

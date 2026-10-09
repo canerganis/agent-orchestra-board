@@ -1,8 +1,0 @@
-{"type":"init","timestamp":"2026-10-09T10:01:00.000Z","session_id":"6f1c2d3e-aaaa-4bbb-8ccc-0123456790cd","model":"gemini-2.5-flash"}
-{"type":"message","timestamp":"2026-10-09T10:01:00.100Z","role":"user","content":"What is in src?"}
-{"type":"tool_use","timestamp":"2026-10-09T10:01:01.000Z","tool_name":"read_file","tool_id":"read_file-1","parameters":{"absolute_path":"C:\\proj\\src\\a.js"}}
-{"type":"tool_result","timestamp":"2026-10-09T10:01:01.100Z","tool_id":"read_file-1","status":"success","output":"module.exports = 1;"}
-{"type":"tool_use","timestamp":"2026-10-09T10:01:01.200Z","tool_name":"read_file","tool_id":"read_file-2","parameters":{"absolute_path":"C:\\proj\\src\\missing.js"}}
-{"type":"tool_result","timestamp":"2026-10-09T10:01:01.300Z","tool_id":"read_file-2","status":"error","error":{"type":"FILE_NOT_FOUND","message":"File not found"}}
-{"type":"message","timestamp":"2026-10-09T10:01:02.000Z","role":"assistant","content":"src has a.js only.","delta":true}
-{"type":"result","timestamp":"2026-10-09T10:01:02.500Z","status":"success","stats":{"total_tokens":2500,"input_tokens":2400,"output_tokens":100,"cached":0,"duration_ms":2500,"tool_calls":2}}

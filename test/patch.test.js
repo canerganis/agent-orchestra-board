@@ -130,7 +130,9 @@ test('(d) a symlink is listed in unsafe', { skip: SKIP }, (t) => {
   const f = fixture();
   try {
     const w = f.worktree('a');
+    let real = true;
     try { fs.symlinkSync('README.md', path.join(w.dir, 'link')); } catch {
+      real = false;
       // No symlink privilege (Windows without developer mode): with core.symlinks=false git keeps a 120000 index
       // entry for a plain file holding the link target, which is exactly how such a checkout stores a symlink.
       write(w.dir, 'link', 'README.md');
@@ -139,7 +141,10 @@ test('(d) a symlink is listed in unsafe', { skip: SKIP }, (t) => {
     }
     gitIn(w.dir, ['add', '-A']);
     if (!/^120000 /.test(gitIn(w.dir, ['ls-files', '-s', 'link']))) return t.skip('git does not record symlinks on this machine');
-    const fz = patch.freezeProposal({ store: f.store, worktreeDir: w.dir, startTree: w.startTree, roomId: 'r1', itemId: 'a', round: 1 });
+    const args = { store: f.store, worktreeDir: w.dir, startTree: w.startTree, roomId: 'r1', itemId: 'a', round: 1 };
+    // A real link on disk is refused before the patch is listed; an index-only 120000 entry reaches the unsafe list.
+    if (real) return assert.throws(() => patch.freezeProposal(args), /refusing to stage the worktree: .*link contains a symbolic link or junction/);
+    const fz = patch.freezeProposal(args);
     assert.ok(fz.unsafe.includes('link'), `unsafe: ${JSON.stringify(fz.unsafe)}`);
   } finally { f.cleanup(); }
 });
@@ -383,8 +388,9 @@ test('(k) concurrent applies are serialized: both succeed and the second builds 
 
 // Records a symlink at `rel` in the worktree index (a real symlink when allowed, else a 120000 index entry, which is
 // how a checkout with core.symlinks=false stores one). Returns false when git does not record it as a symlink.
-function addSymlink(dir, rel, target) {
-  try { fs.symlinkSync(target, path.join(dir, rel)); } catch {
+// real=false never creates a link on disk (staging refuses a worktree that holds one), only the index entry.
+function addSymlink(dir, rel, target, real = true) {
+  try { if (!real) throw new Error('index entry only'); fs.symlinkSync(target, path.join(dir, rel)); } catch {
     write(dir, rel, target);
     const blob = gitIn(dir, ['hash-object', '-w', rel]);
     gitIn(dir, ['update-index', '--add', '--cacheinfo', `120000,${blob},${rel}`]);
@@ -480,7 +486,7 @@ test('apply refuses a patch that adds a symlink or an embedded repository', { sk
     assert.match(rg.reason, /160000/);
 
     const wl = f.worktree('link');
-    if (!addSymlink(wl.dir, 'link', 'README.md')) return t.skip('git does not record symlinks on this machine');
+    if (!addSymlink(wl.dir, 'link', 'README.md', false)) return t.skip('git does not record symlinks on this machine');
     const link = f.freeze('link', wl);
     const rl = await f.apply(link);
     assert.deepEqual([rl.ok, rl.code], [false, 'unsafe-proposal']);

@@ -205,17 +205,17 @@ function fingerprint(dir, { excludeOrchestra = false, wt = null } = {}) {
 
 function createWorktree(project, roomId, itemId, baseCommit) {
   checkIds(roomId, itemId);
+  const orch = path.join(project, '.orchestra');
+  const root = worktreeRoot(project);
+  const roomDir = path.join(root, roomId);
+  const refuse = () => new Error('refusing to create a worktree outside .orchestra/worktrees');
+  // Existing links are refused first (the security reason is reported before any repository state) and before anything is created through them.
+  for (const p of [orch, root]) if (isSymlinkPath(p)) throw refuse();
   const info = repoInfo(project);
   if (!info.ok) throw new Error(info.reason);
   if (!/^[0-9a-f]{40,64}$/.test(String(baseCommit || '')) || !runGit(project, ['cat-file', '-e', `${baseCommit}^{commit}`]).ok) {
     throw new Error('invalid base commit');
   }
-  const orch = path.join(project, '.orchestra');
-  const root = worktreeRoot(project);
-  const roomDir = path.join(root, roomId);
-  const refuse = () => new Error('refusing to create a worktree outside .orchestra/worktrees');
-  // Existing links are refused before anything is created through them.
-  for (const p of [orch, root]) if (isSymlinkPath(p)) throw refuse();
   fs.mkdirSync(roomDir, { recursive: true });
   for (const p of [orch, root, roomDir]) if (isSymlinkPath(p)) throw refuse();
   if (!within(roomDir, project)) throw refuse();

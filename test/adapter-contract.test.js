@@ -6,14 +6,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { registry, validateAdapter } = require('../src/adapters');
 
-const NAMES = ['claude', 'codex', 'gemini', 'cursor'];
+const NAMES = ['claude', 'codex', 'antigravity', 'cursor'];
 
 // Deny list per adapter. `tokens` must not equal any argv entry. `fragments` must not appear inside any argv entry
 // (codex passes its sandbox as a -c value such as sandbox_mode="workspace-write").
 const DENY = {
   claude: { tokens: ['acceptEdits', 'bypassPermissions', '--dangerously-skip-permissions', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'], fragments: [] },
   codex: { tokens: ['--full-auto', '--yolo', '--dangerously-bypass-approvals-and-sandbox'], fragments: ['workspace-write', 'danger-full-access'] },
-  gemini: { tokens: ['--yolo', '-y', 'auto_edit', 'yolo'], fragments: [] },
+  antigravity: { tokens: ['--dangerously-skip-permissions', '--add-dir', 'accept-edits'], fragments: [] },
   cursor: { tokens: ['--force', '-f', '--yolo', 'agent'], fragments: [] },
 };
 
@@ -21,7 +21,7 @@ const DENY = {
 const POSITIVE = {
   claude: (a) => a[a.indexOf('--permission-mode') + 1] === 'dontAsk',
   codex: (a) => a.includes('sandbox_mode="read-only"'),
-  gemini: (a) => a[a.indexOf('--approval-mode') + 1] === 'plan',
+  antigravity: (a) => a[a.indexOf('--mode') + 1] === 'plan' && a.includes('--sandbox'),
   cursor: (a) => a[a.indexOf('--mode') + 1] === 'ask',
 };
 
@@ -30,7 +30,7 @@ const PROMPT = 'List the files in this project.';
 // Option sets a read-only turn is built with: a fresh turn, and a resumed turn where the CLI supports one.
 function readOnlyOptions(name) {
   const base = { model: registry[name].MODELS[0], effort: 'low', prompt: PROMPT, mode: 'read' };
-  return [base, { ...base, thread: 'thread-123' }];
+  return [base, { ...base, thread: 'thread-123', resumeId: 'thread-123' }];
 }
 
 function violations(name, argv) {
@@ -73,8 +73,8 @@ for (const n of NAMES) {
   });
 }
 
-test('gemini and cursor refuse write mode outright', () => {
-  for (const n of ['gemini', 'cursor']) {
+test('antigravity and cursor refuse write mode outright', () => {
+  for (const n of ['antigravity', 'cursor']) {
     const { MODELS } = registry[n];
     assert.throws(() => registry[n].buildArgs({ model: MODELS[0], effort: 'low', prompt: PROMPT, mode: 'write' }), /read-only/, n);
   }
@@ -92,9 +92,9 @@ function fixtureLines(rel) {
   return fs.readFileSync(path.join(__dirname, 'fixtures', rel), 'utf8').split(/\r?\n/).filter(Boolean);
 }
 
-for (const n of ['gemini', 'cursor']) {
+for (const n of ['antigravity', 'cursor']) {
   test(`${n}: parseLine turns a recorded fixture into text and done events`, () => {
-    const events = fixtureLines(path.join(n, 'normal.jsonl')).flatMap((l) => registry[n].parseLine(l));
+    const events = fixtureLines(n === 'antigravity' ? path.join(n, 'real-turn.jsonl') : path.join(n, 'normal.jsonl')).flatMap((l) => registry[n].parseLine(l));
     assert.ok(events.some((e) => e.type === 'text'), `${n} has a text event`);
     assert.ok(events.some((e) => e.type === 'done'), `${n} has a done event`);
   });

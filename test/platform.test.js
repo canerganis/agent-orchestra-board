@@ -52,7 +52,7 @@ test('codexWriteSupport: off on win32 (unelevated sandbox), darwin and linux (wr
     const r = p.codexWriteSupport(plat);
     assert.equal(r.ok, false, plat);
     assert.equal(r.code, 'codex-writes-off', plat);
-    assert.match(r.reason, /^off in v0\.2: Codex file edits return on macOS and Linux after the write check covers shell writes and has passed on real machines\. Codex seats can still read, review and propose\.$/);
+    assert.equal(r.reason, p.CODEX_WINDOWS_WRITE_REASON);
   }
   for (const other of ['freebsd', 'aix', 'sunos', '', null]) {
     const r = p.codexWriteSupport(other);

@@ -4,12 +4,12 @@
 //   MODELS:    non-empty array of model ids the CLI accepts for a seat.
 //   readOnly:  one sentence on how a read-only turn is enforced.
 //   buildArgs: argv array for one turn. Options: model, effort, mode ('read' | 'write' | 'none'), plus per-CLI
-//              fields (claude: thread, sessionId, addDir; gemini and cursor: prompt, required).
+//              fields (claude: thread, sessionId, addDir; antigravity: prompt, required, resumeId; cursor: prompt, required).
 //   parseLine: normalized events for one stdout line (see docs/adapters.md).
 const config = require('../config');
 const claude = require('./claude');
 const codex = require('./codex');
-const gemini = require('./gemini');
+const antigravity = require('./antigravity');
 const cursor = require('./cursor');
 
 // claude and codex parse with a stateful createParser (the runner uses that). parseLine is a stateless view of a
@@ -46,12 +46,12 @@ const registry = {
     buildArgs: codex.buildArgs,
     parseLine: lineParser(codex),
   },
-  gemini: {
-    name: 'gemini',
-    MODELS: gemini.GEMINI_MODELS,
-    readOnly: 'gemini --approval-mode plan plus --exclude-tools for shell, write, edit and web tools. UNVERIFIED until tested with the real CLI.',
-    buildArgs: gemini.buildArgs,
-    parseLine: gemini.parseLine,
+  antigravity: {
+    name: 'antigravity',
+    MODELS: antigravity.AGY_MODELS,
+    readOnly: 'agy -p with --mode plan and --sandbox, and never --dangerously-skip-permissions, --add-dir or accept-edits. Verified against one real turn of agy 1.2.17.',
+    buildArgs: antigravity.buildArgs,
+    parseLine: antigravity.parseLine,
   },
   cursor: {
     name: 'cursor',

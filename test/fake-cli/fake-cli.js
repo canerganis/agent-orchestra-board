@@ -49,7 +49,7 @@ const path = require('path');
 const DIR = process.env.OB_FAKE_DIR;
 
 function parseArgs(args) {
-  const a = { agent: args[0] === 'exec' ? 'codex' : process.env.OB_FAKE_AGENT === 'cursor' ? 'cursor' : (process.env.OB_FAKE_AGENT === 'gemini' || args.includes('--approval-mode')) ? 'gemini' : 'claude', prompt: null, resume: null, sessionId: null, model: null, effort: null, tools: null, permissionMode: null, addDir: null, sandbox: null, config: {} };
+  const a = { agent: args[0] === 'exec' ? 'codex' : process.env.OB_FAKE_AGENT === 'cursor' ? 'cursor' : (process.env.OB_FAKE_AGENT === 'agy' || args.includes('--mode')) ? 'agy' : 'claude', prompt: null, resume: null, sessionId: null, model: null, effort: null, tools: null, permissionMode: null, addDir: null, sandbox: null, config: {} };
   if (a.agent === 'codex') {
     if (args[1] === 'resume') a.resume = args[2];
     for (let i = 0; i < args.length; i++) if (args[i] === '-c') { const [k, v] = String(args[++i]).split(/=(.*)/s); a.config[k] = v; }
@@ -64,11 +64,14 @@ function parseArgs(args) {
       else if (args[i] === '--sandbox') a.sandbox = args[++i];
       else if (args[i] === '--') { a.prompt = args[i + 1]; break; }
     }
-  } else if (a.agent === 'gemini') {
+  } else if (a.agent === 'agy') {
+    // agy -p <prompt> --output-format stream-json --mode plan --sandbox ... [--model m] [--effort e] [--conversation id]
     for (let i = 0; i < args.length; i++) {
-      if (args[i] === '-m') a.model = args[++i];
-      else if (args[i] === '--approval-mode') a.permissionMode = args[++i];
-      else if (args[i] === '--exclude-tools') (a.tools ||= []).push(args[++i]);
+      if (args[i] === '--model') a.model = args[++i];
+      else if (args[i] === '--effort') a.effort = args[++i];
+      else if (args[i] === '--mode') a.permissionMode = args[++i];
+      else if (args[i] === '--conversation') a.resume = args[++i];
+      else if (args[i] === '--sandbox') a.sandbox = 'on';
       else if (args[i] === '-p') a.prompt = args[++i];
     }
   } else {
@@ -175,18 +178,23 @@ function codexEvents(rule, a, tid, reply) {
   return { head, body, tail };
 }
 
-// Gemini mode (UNVERIFIED shape, see src/adapters/gemini.js): `gemini --output-format stream-json ... -p <prompt>`;
-// selected by OB_FAKE_AGENT=gemini or an --approval-mode flag. Honours reply, usage ({total, cached}), tool, error.
-function geminiEvents(rule, a, tid, reply) {
-  const u = { total: 100, cached: 60, ...(rule.usage || {}) };
-  const head = [{ type: 'init', session_id: tid, model: a.model || 'gemini-2.5-pro' }];
-  const body = [{ type: 'message', role: 'user', content: a.prompt || '' }];
-  if (rule.tool) body.push({ type: 'tool_use', tool_name: 'read_file', tool_id: 'read_file-1', parameters: { absolute_path: 'a.js' } }, { type: 'tool_result', tool_id: 'read_file-1', status: 'success', output: 'a' });
-  body.push({ type: 'message', role: 'assistant', content: reply, delta: true });
-  for (const e of rule.events || []) body.push(e);
-  const tail = rule.crash ? [] : rule.error
-    ? [{ type: 'error', severity: 'error', message: rule.error }, { type: 'result', status: 'error', error: { type: 'Error', message: rule.error }, stats: { total_tokens: 0, input_tokens: 0, output_tokens: 0, cached: 0 } }]
-    : [{ type: 'result', status: 'success', stats: { total_tokens: u.total, input_tokens: u.total, output_tokens: 0, cached: u.cached } }];
+// Agy mode (see src/adapters/antigravity.js): replays test/fixtures/antigravity/real-turn.jsonl with the conversation id
+// and the reply swapped in; selected by OB_FAKE_AGENT=agy or a --mode flag. Honours reply, error and crash.
+function agyEvents(rule, a, tid, reply) {
+  const file = path.join(__dirname, '..', 'fixtures', 'antigravity', 'real-turn.jsonl');
+  const evs = fs.readFileSync(file, 'utf8').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => JSON.parse(l));
+  for (const ev of evs) {
+    const o = ev.event === 'init' ? ev : ev.step_update || ev.result;
+    o.conversation_id = tid;
+    if (typeof o.text_delta === 'string') o.text_delta = String(reply);
+    if (ev.event === 'result') o.response = String(reply);
+  }
+  const head = evs.filter((e) => e.event === 'init');
+  if (a.model) head[0].init.model = a.model;
+  const body = evs.filter((e) => e.event === 'step_update');
+  let tail = evs.filter((e) => e.event === 'result');
+  if (rule.error) tail = [{ event: 'result', result: { conversation_id: tid, status: 'ERROR', response: String(rule.error), duration_seconds: 0, num_turns: 1, usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0, cache_read_tokens: 0, total_tokens: 0 } } }];
+  if (rule.crash) tail = [];
   return { head, body, tail };
 }
 
@@ -261,7 +269,7 @@ async function main() {
   // `claude auth status` / `codex login status` (doctor's login checks): logged in; not a turn, so not logged.
   if (args.length === 2 && args[1] === 'status' && (args[0] === 'auth' || args[0] === 'login')) { await write(process.stdout, 'Logged in (orchestra-board test double)\n'); return; }
   const a = parseArgs(args);
-  const prompt = a.agent === 'gemini' || a.agent === 'cursor' ? (a.prompt || '') : await readStdin();
+  const prompt = a.agent === 'agy' || a.agent === 'cursor' ? (a.prompt || '') : await readStdin();
   const threadsDir = path.join(DIR, 'threads');
   fs.mkdirSync(threadsDir, { recursive: true });
 
@@ -270,7 +278,7 @@ async function main() {
   if (a.resume) seat = readJson(path.join(threadsDir, a.resume + '.json'), {}).seat || null;
   else {
     seat = (prompt.match(/^\[You are "([^"]+)"/) || [])[1] || null;
-    thread = a.agent === 'codex' || a.agent === 'gemini' || a.agent === 'cursor' ? (a.agent === 'gemini' ? 'gm-' : a.agent === 'cursor' ? 'cu-' : 'cx-') + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) : a.sessionId;
+    thread = a.agent === 'codex' || a.agent === 'agy' || a.agent === 'cursor' ? (a.agent === 'agy' ? 'ag-' : a.agent === 'cursor' ? 'cu-' : 'cx-') + Date.now().toString(36) + Math.random().toString(36).slice(2, 7) : a.sessionId;
     if (thread) fs.writeFileSync(path.join(threadsDir, thread + '.json'), JSON.stringify({ seat, agent: a.agent }));
   }
 
@@ -310,7 +318,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  const ev = a.agent === 'cursor' ? cursorEvents(rule, a, thread, reply) : a.agent === 'gemini' ? geminiEvents(rule, a, thread, reply) : a.agent === 'codex' ? codexEvents(rule, a, thread, reply) : claudeEvents(rule, a, thread || 'probe-' + process.pid, reply);
+  const ev = a.agent === 'cursor' ? cursorEvents(rule, a, thread, reply) : a.agent === 'agy' ? agyEvents(rule, a, thread, reply) : a.agent === 'codex' ? codexEvents(rule, a, thread, reply) : claudeEvents(rule, a, thread || 'probe-' + process.pid, reply);
   await write(process.stdout, jsonl(ev.head));
   if (rule.hang) {
     // Looks busy forever (so the board shows "thinking") until the runner kills the process tree.
