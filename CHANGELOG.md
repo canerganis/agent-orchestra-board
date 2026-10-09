@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+* **Claude Code plugin.** The repository is a Claude Code plugin and marketplace: `/plugin marketplace add canerganis/agent-orchestra-board`, then `/plugin install agent-orchestra-board@agent-orchestra-board`. Its skill opens the board for the current project and runs a Council or an Ask from the chat through `scripts/orchestra.mjs`, which also works from a terminal (`start`, `status`, `council`, `ask`). Council and Ask stay read-only.
+
 ## [0.2.0] (2026-10-09)
 
 The board gets four modes (Ask, Council, Workflow, Runs), Plan → Approve → Build with a choice of who builds, and a containment gate for file edits. Writes happen only in per-item git worktrees. Claude write seats have no shell and need a passed write check; Codex never edits files and builds through checked diffs instead. No migration is needed: existing rooms, seats and routes keep working. Every earlier write check is void, because check records moved out of the project: run the check once more for Claude.

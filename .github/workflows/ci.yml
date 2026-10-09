@@ -37,7 +37,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          for f in server.js bin/*.js bench/*.mjs docs/measurements/*/*.mjs $(find src test public -name '*.js'); do
+          for f in server.js bin/*.js bench/*.mjs scripts/*.mjs docs/measurements/*/*.mjs $(find src test public -name '*.js'); do
             node --check "$f"
           done
 

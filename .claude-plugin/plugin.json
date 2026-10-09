@@ -1,0 +1,10 @@
+{
+  "name": "agent-orchestra-board",
+  "version": "0.2.0",
+  "description": "Open Agent Orchestra Board for the current project from Claude Code, and run a Council or an Ask without leaving the chat.",
+  "author": { "name": "Can Erganis", "url": "https://github.com/canerganis" },
+  "homepage": "https://github.com/canerganis/agent-orchestra-board",
+  "repository": "https://github.com/canerganis/agent-orchestra-board",
+  "license": "MIT",
+  "keywords": ["claude-code", "codex", "multi-agent", "orchestration", "council"]
+}

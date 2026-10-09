@@ -1,0 +1,17 @@
+{
+  "name": "agent-orchestra-board",
+  "owner": {
+    "name": "Can Erganis",
+    "url": "https://github.com/canerganis"
+  },
+  "metadata": {
+    "description": "Agent Orchestra Board: run Claude Code and Codex agents as one team from a local board."
+  },
+  "plugins": [
+    {
+      "name": "agent-orchestra-board",
+      "source": "./",
+      "description": "Open Agent Orchestra Board for the current project from Claude Code, and run a Council or an Ask without leaving the chat."
+    }
+  ]
+}

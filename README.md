@@ -62,6 +62,26 @@ The default team is one Claude seat and three Codex seats. With only one CLI ins
 
 All project state lives in `<project>/.orchestra/` (`seats.json`, `rooms/`, `BRAINSTORM.md`, `LOG.md`, `session`, `proposals/`, `worktrees/`, `handoff/`, ...). **Never commit `session`**: it is the password to the board. The board writes a `.orchestra/.gitignore` that lists `session`, `worktrees/` and the rest it must keep out of git. Write check records are kept per user, outside every project (see [Safety and permissions](#safety-and-permissions)).
 
+## Use it from Claude Code
+
+The repository is also a Claude Code plugin. Add it once:
+
+```
+/plugin marketplace add canerganis/agent-orchestra-board
+/plugin install agent-orchestra-board@agent-orchestra-board
+```
+
+Then, in any project, ask Claude to open the orchestra board, or to get a council from Claude and Codex on a question. The skill (`/agent-orchestra-board:orchestra-board`) runs one helper script, `scripts/orchestra.mjs`, which you can also use from a terminal:
+
+```sh
+node scripts/orchestra.mjs start                         # open the board for this folder, or find the running one
+node scripts/orchestra.mjs council "Should we cache X?" --seats claude,luna
+node scripts/orchestra.mjs ask "Summarize src/list.js" --seat claude
+node scripts/orchestra.mjs status
+```
+
+Council and Ask are read-only. Builds that edit files are started in the board, after you approve the plan.
+
 ## Four modes
 
 The sidebar has four modes. Keys `1` to `4` switch between them, and `N` starts something new in the current one.
