@@ -1,0 +1,7 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"C:\\work\\demo","session_id":"711bf2a9-bc70-4358-a426-745620da545a","model":"Auto","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Now name the file you read, nothing else."}]},"session_id":"711bf2a9-bc70-4358-a426-745620da545a"}
+{"type":"thinking","subtype":"delta","text":"I will name only the","session_id":"711bf2a9-bc70-4358-a426-745620da545a","timestamp_ms":1791548035692}
+{"type":"thinking","subtype":"delta","text":" file I read.","session_id":"711bf2a9-bc70-4358-a426-745620da545a","timestamp_ms":1791548035694}
+{"type":"thinking","subtype":"completed","session_id":"711bf2a9-bc70-4358-a426-745620da545a","timestamp_ms":1791548035695}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"src/list.js"}]},"session_id":"711bf2a9-bc70-4358-a426-745620da545a"}
+{"type":"result","subtype":"success","duration_ms":4376,"duration_api_ms":4376,"is_error":false,"result":"src/list.js","session_id":"711bf2a9-bc70-4358-a426-745620da545a","request_id":"15e6d613-1f21-4617-8e56-2e034702fa7b","usage":{"inputTokens":224,"outputTokens":19,"cacheReadTokens":13440,"cacheWriteTokens":0}}

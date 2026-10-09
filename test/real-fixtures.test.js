@@ -6,6 +6,7 @@ const path = require('node:path');
 const claude = require('../src/adapters/claude');
 const codex = require('../src/adapters/codex');
 const agy = require('../src/adapters/antigravity');
+const cursor = require('../src/adapters/cursor');
 
 const DIR = path.join(__dirname, 'fixtures', 'real');
 const read = (f) => fs.readFileSync(path.join(DIR, f), 'utf8');
@@ -31,6 +32,12 @@ function runAgy(file) {
   return { threads: of('thread').map((e) => e.id), text: of('text').map((e) => e.text).join(''), tools: of('tool'), usage: of('usage'), errors: of('error'), completed: of('done') };
 }
 
+const runCursor = (file) => {
+  const evs = read(file).split('\n').filter(Boolean).flatMap((l) => cursor.parseLine(l));
+  const of = (t) => evs.filter((e) => e.type === t);
+  return { threads: of('thread').map((e) => e.id), text: of('text').map((e) => e.text).join(''), tools: of('tool'), usage: of('usage'), errors: of('error'), completed: of('done') };
+};
+
 function common(r) {
   assert.equal(r.threads.length, 1, 'exactly one thread id');
   assert.ok(r.threads[0] && r.threads[0].length > 8);
@@ -50,6 +57,8 @@ const CASES = [
   ['codex', runStateful.bind(null, codex), 'codex-resume.jsonl', { text: /src[\/]list\.js/ }],
   ['agy', runAgy, 'agy-tool.jsonl', { tool: true }],
   ['agy', runAgy, 'agy-resume.jsonl', { text: /src[\/]list\.js/ }],
+  ['cursor', runCursor, 'cursor-tool.jsonl', { text: /list\(/, tool: true }],
+  ['cursor', runCursor, 'cursor-resume.jsonl', { text: /src[\/]list\.js/ }],
 ];
 
 for (const [name, run, file, want] of CASES) {
@@ -65,6 +74,7 @@ test('real recordings: resume files keep the thread id of the matching tool reco
   assert.equal(runStateful(claude, 'claude-resume.jsonl').threads[0], runStateful(claude, 'claude-tool.jsonl').threads[0]);
   assert.equal(runStateful(codex, 'codex-resume.jsonl').threads[0], runStateful(codex, 'codex-tool.jsonl').threads[0]);
   assert.equal(runAgy('agy-resume.jsonl').threads[0], runAgy('agy-tool.jsonl').threads[0]);
+  assert.equal(runCursor('cursor-resume.jsonl').threads[0], runCursor('cursor-tool.jsonl').threads[0]);
 });
 
 test('fake CLI: a scenario rule with replay prints the real recording, with the thread id swapped', () => {

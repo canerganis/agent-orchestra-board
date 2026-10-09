@@ -9,11 +9,11 @@ An adapter turns one agent CLI into the three things the board needs: the argv f
 | Claude Code (`claude`) | `src/adapters/claude.js` | Wired into seats. Read, write and none modes. |
 | Codex CLI (`codex`) | `src/adapters/codex.js` | Wired into seats. Read and write modes. |
 | Antigravity CLI (`agy`) | `src/adapters/antigravity.js` | Read-only. Verified against one real turn of agy 1.2.17 on Windows on 2026-10-09 (`test/fixtures/antigravity/real-turn.jsonl`). Not wired into seats or config. |
-| Cursor CLI (`cursor-agent`) | `src/adapters/cursor.js` | Read-only. UNVERIFIED: built from public docs and fixtures, not from a real run. Not wired into seats or config. |
+| Cursor CLI (`agent`, legacy alias `cursor-agent`) | `src/adapters/cursor.js` | Read-only. Verified against one real turn and one resume of Cursor CLI 2026.10.01 on Windows (`test/fixtures/real/cursor-*.jsonl`). Not wired into seats or config. |
 
 The Gemini CLI adapter was replaced by the Antigravity adapter because `agy` is what Antigravity installs, and the Gemini CLI is not installed here. `agy` serves Gemini models and also Claude models through its own Antigravity quota. It is not on PATH on Windows: `resolveBin` checks `ORCHESTRA_AGY_BIN`, then PATH, then `%LOCALAPPDATA%\Packages\OpenAI.Codex_*\LocalCache\Local\agy\bin\agy.exe`.
 
-Cursor stays unverified until someone runs them against the real CLIs, checks the flags with `--help`, and records a real stream into `test/fixtures/`. Until then its flag names and event shapes may be wrong.
+Cursor is verified on Windows only. `resolveBin` returns `{ cmd, prefixArgs }`: on Windows the newest `%LOCALAPPDATA%\cursor-agent\versions\<date-commit>\node.exe` plus its `index.js` (the `agent.cmd` shim is refused by the spawn helper), elsewhere `agent` or `cursor-agent` on PATH. `ORCHESTRA_CURSOR_BIN` overrides. macOS and Linux (`--sandbox enabled`) are untested.
 
 ## The contract
 
@@ -45,7 +45,7 @@ A read-only turn must not carry write or shell permissions. The contract test en
 1. Claude: `--permission-mode dontAsk` and `--tools Read Grep Glob`. Any other tool is denied without a prompt. The deny list covers `acceptEdits`, `bypassPermissions`, `--dangerously-skip-permissions`, `Edit`, `MultiEdit`, `Write`, `NotebookEdit` and `Bash`.
 2. Codex: `sandbox_mode="read-only"`. The deny list covers `--full-auto`, `--yolo`, `--dangerously-bypass-approvals-and-sandbox`, and any argument that contains `workspace-write` or `danger-full-access`.
 3. Antigravity: `--mode plan` and `--sandbox`. The deny list covers `--dangerously-skip-permissions`, `--add-dir` and `accept-edits`. A resumed turn adds `--conversation <id>`.
-4. Cursor: `--mode ask` and `--sandbox enabled`. The deny list covers `--force`, `-f`, `--yolo` and `agent` (the mode that can edit). Cursor's buildArgs throws on write mode.
+4. Cursor: `--mode ask --trust`, with `--sandbox enabled` (`disabled` on Windows, which has no sandbox; unapproved commands still do not run). A resumed turn adds `--resume <session_id>`. The deny list covers `-f`, `--force`, `--yolo`, `--approve-mcps`, `--auto-review` and `agent` (the mode that can edit). Cursor's buildArgs throws on write mode.
 
 Antigravity and Cursor have no write mode at all. Their buildArgs throws when asked for one.
 

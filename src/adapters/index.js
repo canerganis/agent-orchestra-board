@@ -56,7 +56,7 @@ const registry = {
   cursor: {
     name: 'cursor',
     MODELS: cursor.CURSOR_MODELS,
-    readOnly: 'cursor-agent --mode ask with --sandbox enabled, and never --force or --yolo. UNVERIFIED until tested with the real CLI.',
+    readOnly: 'agent -p --mode ask --trust with --sandbox enabled (disabled on Windows, which has no sandbox), and never -f, --force, --yolo, --approve-mcps or --auto-review. Verified against one real turn and one resume of Cursor CLI 2026.10.01.',
     buildArgs: cursor.buildArgs,
     parseLine: cursor.parseLine,
   },

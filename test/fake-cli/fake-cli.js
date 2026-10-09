@@ -64,12 +64,14 @@ function parseArgs(args) {
     a.effort = (a.config.model_reasoning_effort || '').replace(/^"|"$/g, '');
     a.sandbox = (a.config.sandbox_mode || '').replace(/^"|"$/g, '');
   } else if (a.agent === 'cursor') {
-    // cursor-agent -p --output-format stream-json --mode ask [--model m] [--sandbox s] -- <prompt>
+    // agent -p --output-format stream-json --mode ask [--model m] [--sandbox s] [--trust] [--resume id] <prompt> (prompt last)
     for (let i = 0; i < args.length; i++) {
       if (args[i] === '--model') a.model = args[++i];
       else if (args[i] === '--mode') a.permissionMode = args[++i];
       else if (args[i] === '--sandbox') a.sandbox = args[++i];
-      else if (args[i] === '--') { a.prompt = args[i + 1]; break; }
+      else if (args[i] === '--resume') a.resume = args[++i];
+      else if (args[i] === '--output-format') i++;
+      else if (!args[i].startsWith('-')) a.prompt = args[i];
     }
   } else if (a.agent === 'agy') {
     // agy -p <prompt> --output-format stream-json --mode plan --sandbox ... [--model m] [--effort e] [--conversation id]
@@ -233,7 +235,7 @@ function agyEvents(rule, a, tid, reply) {
   return { head, body, tail };
 }
 
-// Cursor mode (UNVERIFIED shape, see src/adapters/cursor.js): selected by OB_FAKE_AGENT=cursor. Honours reply, tool, error.
+// Cursor mode (shape from the real recordings, see src/adapters/cursor.js): selected by OB_FAKE_AGENT=cursor. Honours reply, tool, error.
 function cursorEvents(rule, a, tid, reply) {
   const head = [{ type: 'system', subtype: 'init', session_id: tid, model: a.model || 'auto', permissionMode: a.permissionMode || 'default', cwd: process.cwd() }];
   const body = [{ type: 'user', message: { role: 'user', content: [{ type: 'text', text: a.prompt || '' }] }, session_id: tid }];

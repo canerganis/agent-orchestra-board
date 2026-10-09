@@ -1,8 +1,0 @@
-{"type":"system","subtype":"init","apiKeySource":"login","cwd":"C:\\proj","session_id":"c0ffee00-1111-4222-8333-444455557777","model":"GPT-5","permissionMode":"default"}
-{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"C:\\proj\\src\\a.js"}}},"session_id":"c0ffee00-1111-4222-8333-444455557777"}
-{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"readToolCall":{"args":{"path":"C:\\proj\\src\\a.js"},"result":{"success":{"content":"module.exports = 1;","totalLines":1}}}},"session_id":"c0ffee00-1111-4222-8333-444455557777"}
-{"type":"tool_call","subtype":"started","call_id":"call-2","tool_call":{"readToolCall":{"args":{"path":"C:\\proj\\src\\missing.js"}}},"session_id":"c0ffee00-1111-4222-8333-444455557777"}
-{"type":"tool_call","subtype":"completed","call_id":"call-2","tool_call":{"readToolCall":{"args":{"path":"C:\\proj\\src\\missing.js"},"result":{"error":{"message":"File not found"}}}},"session_id":"c0ffee00-1111-4222-8333-444455557777"}
-{"type":"tool_call","subtype":"started","call_id":"call-3","tool_call":{"function":{"name":"custom_tool","arguments":"{\"q\":1}"}},"session_id":"c0ffee00-1111-4222-8333-444455557777"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"src has a.js only."}]},"session_id":"c0ffee00-1111-4222-8333-444455557777"}
-{"type":"result","subtype":"success","duration_ms":2500,"is_error":false,"result":"src has a.js only.","session_id":"c0ffee00-1111-4222-8333-444455557777"}

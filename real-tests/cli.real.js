@@ -34,7 +34,7 @@ const bins = {
   claude: off ? null : resolveExe(claudeBin()),
   codex: off ? null : resolveExe(codexBin()),
   agy: off ? null : agy.resolveBin(),
-  cursor: off ? null : resolveExe(process.env.ORCHESTRA_CURSOR_BIN || 'cursor-agent'),
+  cursor: off ? null : cursor.resolveBin(),
 };
 const skipFor = (cli) => off || (bins[cli] ? false : `${cli} CLI not found`);
 const skipFlow = () => off || (bins.claude && bins.codex ? false : 'needs both the claude and codex CLIs');
@@ -141,13 +141,26 @@ test('real agy: resume turn keeps the conversation and remembers the file', { sk
   assert.equal(r.thread, agyThread);
 });
 
-// The Cursor adapter is still marked UNVERIFIED and reports no usage; it has no resume flag, so one turn only.
-test('real cursor-agent: read-only (ask mode) turn mentions list()', { skip: skipFor('cursor'), timeout: TURN_MS }, async () => {
-  const r = await adapterTurn({ bin: bins.cursor, args: cursor.buildArgs({ model: CURSOR_MODEL, prompt: PROMPT_READ }), cwd: project, parse: cursor.parseLine });
-  count('cursor turn');
+let cursorThread = null;
+const cursorTurn = (opts) => adapterTurn({ bin: bins.cursor.cmd, args: [...bins.cursor.prefixArgs, ...cursor.buildArgs({ model: CURSOR_MODEL, ...opts })], cwd: project, parse: cursor.parseLine });
+test('real cursor agent: read-only (ask mode) turn mentions list() and reports usage', { skip: skipFor('cursor'), timeout: TURN_MS }, async () => {
+  const r = await cursorTurn({ prompt: PROMPT_READ });
+  count('cursor turn', r.tokens, r.cached);
   assert.ok(r.done && r.errors.length === 0, why(r));
   assert.match(r.text, /list\(/);
+  assert.ok(r.tokens > 0, 'the parser reported usage');
+  assert.ok(r.thread, 'session id present');
   assert.equal(fs.readFileSync(path.join(project, 'src', 'list.js'), 'utf8'), LIST_JS, 'read-only: the sample file is untouched');
+  cursorThread = r.thread;
+});
+test('real cursor agent: resume turn keeps the session and remembers the file', { skip: skipFor('cursor'), timeout: TURN_MS }, async () => {
+  assert.ok(cursorThread, 'needs the session of the previous test');
+  const r = await cursorTurn({ prompt: PROMPT_AGAIN, resumeId: cursorThread });
+  count('cursor resume', r.tokens, r.cached);
+  assert.ok(r.done && r.errors.length === 0, why(r));
+  assert.match(r.text, /list\.js/);
+  assert.ok(r.tokens > 0);
+  assert.equal(r.thread, cursorThread);
 });
 
 // ---------- end to end on an in-process board with the real CLIs ----------

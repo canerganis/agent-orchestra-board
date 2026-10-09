@@ -219,7 +219,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) and the [CHANGELOG](CHANGELOG.md). `npm t
 
 `npm test` parses real output. `test/fixtures/real/` holds recordings from 2026-10-09 of Claude Code 2.1.291 (claude-haiku-5-5), Codex CLI 0.160.0 (gpt-6-luna low) and the Google Antigravity CLI agy 1.2.17 (gemini-3.8-flash-low), made with the board's own read-only arguments. `test/real-fixtures.test.js` parses all of them, and the fake CLI replays them for normal turns. Synthetic lines remain only for edge cases such as errors, broken JSON and hangs.
 
-An opt-in suite runs the real CLIs: `OB_REAL=1 npm run test:real`. On 2026-10-09 on Windows 11 it passed 10 of 10, with Cursor skipped because it was not installed. It ran a read-only turn and a resume for Claude, Codex and agy, a two seat Council that reached a synthesis, and a Propose and Review chain (Haiku proposes, Luna reviews). It used about 52k net tokens and 0.10 USD. It never runs in CI. Details: [docs/real-tests.md](docs/real-tests.md).
+An opt-in suite runs the real CLIs: `OB_REAL=1 npm run test:real`. On 2026-10-09 on Windows 11 it passed 12 of 12. It ran a read-only turn and a resume for Claude Code, Codex, Antigravity (agy) and Cursor, a two seat Council that reached a synthesis, and a Propose and Review chain (Haiku proposes, Luna reviews). It used about 88k net tokens and 0.11 USD. It never runs in CI. Details: [docs/real-tests.md](docs/real-tests.md).
 
 ## License
 

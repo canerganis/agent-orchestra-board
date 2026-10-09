@@ -14,7 +14,7 @@ const DENY = {
   claude: { tokens: ['acceptEdits', 'bypassPermissions', '--dangerously-skip-permissions', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit', 'Bash'], fragments: [] },
   codex: { tokens: ['--full-auto', '--yolo', '--dangerously-bypass-approvals-and-sandbox'], fragments: ['workspace-write', 'danger-full-access'] },
   antigravity: { tokens: ['--dangerously-skip-permissions', '--add-dir', 'accept-edits'], fragments: [] },
-  cursor: { tokens: ['--force', '-f', '--yolo', 'agent'], fragments: [] },
+  cursor: { tokens: ['-f', '--force', '--yolo', '--approve-mcps', '--auto-review', 'agent'], fragments: [] },
 };
 
 // Positive checks: the read-only mode is the one the CLI is asked for, not just the absence of write flags.
@@ -94,7 +94,7 @@ function fixtureLines(rel) {
 
 for (const n of ['antigravity', 'cursor']) {
   test(`${n}: parseLine turns a recorded fixture into text and done events`, () => {
-    const events = fixtureLines(n === 'antigravity' ? path.join(n, 'real-turn.jsonl') : path.join(n, 'normal.jsonl')).flatMap((l) => registry[n].parseLine(l));
+    const events = fixtureLines(n === 'antigravity' ? path.join(n, 'real-turn.jsonl') : path.join('real', 'cursor-tool.jsonl')).flatMap((l) => registry[n].parseLine(l));
     assert.ok(events.some((e) => e.type === 'text'), `${n} has a text event`);
     assert.ok(events.some((e) => e.type === 'done'), `${n} has a done event`);
   });
