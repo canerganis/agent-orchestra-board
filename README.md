@@ -9,7 +9,7 @@
 Zero dependencies, runs on your own CLI logins (no API keys). Agents only read your project, except in a Workflow build, where they work inside per-item git worktrees and you apply each reviewed change yourself.
 
 <p align="center">
-  <img src="docs/screenshot-light.png" alt="A finished Council in Agent Orchestra Board: four Claude Code and Codex agents discussed whether to ship a Windows installer; the round verdict shows 3 of 4 agreed, the synthesis lists options, and the right panel shows the live workflow timeline with per-agent tokens and time." width="100%">
+  <img src="docs/screenshot-build.png" alt="A Workflow build in Agent Orchestra Board, from the zero token demo: three plan items, each built by Claude and reviewed by Codex Luna; two are applied and one passed review and waits for you. The right panel shows each item with its builder and reviewer." width="100%">
 </p>
 <p align="center"><sub>A finished Council (called Debate in v0.1): scout brief, two rounds, a round verdict from the agents' stance lines, the synthesis, and the live workflow timeline with tokens per turn.</sub></p>
 
