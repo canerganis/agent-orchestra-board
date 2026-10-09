@@ -17,7 +17,28 @@ const SAMPLE = {
   'src/list.js': 'const { formatText } = require("./format");\nmodule.exports = (tasks) => tasks.map(formatText).join("\\n");\n',
 };
 
-const BANNER = `<div id="demo-banner" style="flex:none;box-sizing:border-box;height:32px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:6px 12px;background:#b45309;color:#fff;font:600 13px/20px system-ui;text-align:center">${MESSAGE}</div>`;
+// Banner text. Rooms recorded from a real run carry recordedAt (ISO time); hand written rooms do not and keep MESSAGE.
+function bannerText(recordedAt) {
+  const d = typeof recordedAt === 'string' ? new Date(recordedAt) : null;
+  if (!d || Number.isNaN(d.getTime())) return MESSAGE;
+  return `Recorded from a real run on ${d.toISOString().slice(0, 10)}. No agents run now.`;
+}
+
+// The first valid recordedAt among the room files in dir, or null.
+function recordedAtOf(dir = ROOMS_DIR) {
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((f) => f.endsWith('.json')).sort(); } catch { return null; }
+  for (const f of names) {
+    try {
+      const v = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')).recordedAt;
+      if (typeof v === 'string' && !Number.isNaN(new Date(v).getTime())) return v;
+    } catch {}
+  }
+  return null;
+}
+
+const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const bannerHtml = (text) => `<div id="demo-banner" style="flex:none;box-sizing:border-box;height:32px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:6px 12px;background:#b45309;color:#fff;font:600 13px/20px system-ui;text-align:center">${esc(text)}</div>`;
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -41,7 +62,7 @@ function copySample(dir) {
 }
 
 // Replaces the server's request listener with a guard in front of it. Allowed: GETs that only read state.
-function guard(app) {
+function guard(app, banner) {
   const inner = app.handle;
   const refuse = (res, code) => {
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -60,7 +81,7 @@ function guard(app) {
       const end = res.end.bind(res);
       res.end = (chunk, ...rest) => {
         if (chunk && res.statusCode === 200 && /text\/html/.test(String(res.getHeader('content-type') || ''))) {
-          chunk = String(chunk).replace(/<body[^>]*>/i, (t) => t + BANNER);
+          chunk = String(chunk).replace(/<body[^>]*>/i, (t) => t + banner);
         }
         return end(chunk, ...rest);
       };
@@ -80,14 +101,16 @@ async function startDemo({ port, tmpRoot = os.tmpdir() } = {}) {
   const usePort = port || await freePort();
   const app = createServer({ projectDir, port: usePort, recordsDir: path.join(projectDir, '.orchestra', 'records') });
   app.runner.shutdown(); // no CLI child can start from this board, whatever route is reached
-  guard(app);
+  const recordedAt = recordedAtOf();
+  const banner = bannerText(recordedAt);
+  guard(app, bannerHtml(banner));
   // Not app.start(): it also runs the CLI checks and the limits poller, which spawn and read the user's CLI state.
   await new Promise((resolve, reject) => { app.server.once('error', reject); app.server.listen(usePort, '127.0.0.1', resolve); });
   const url = `http://localhost:${usePort}/?t=${app.token}`;
   const close = async () => {
     try { await app.close(); } finally { try { fs.rmSync(projectDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch {} }
   };
-  return { app, url, port: usePort, projectDir, rooms, close };
+  return { app, url, port: usePort, projectDir, rooms, recordedAt, banner, close };
 }
 
-module.exports = { startDemo, MESSAGE };
+module.exports = { startDemo, MESSAGE, bannerText, recordedAtOf };

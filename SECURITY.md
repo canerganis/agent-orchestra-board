@@ -25,19 +25,21 @@ Out of scope for v0.2: a compromised browser extension with host permissions, ma
 * The guard fingerprints the main checkout, the board's worktrees and each worktree's `.git` file, around builder write turns only. It does not see ignored files, files outside the project, or a change that is undone before the turn ends.
 * The guard's fingerprint of the main checkout excludes `.orchestra/`. A write that escapes into `.orchestra/` (the session token, the seats, the rooms, the proposals or the handoff files) is not detected.
 * The write check is one prompt, run once. It shows what that CLI did on that machine in that run. Any drift (CLI version, binary, platform, write flags, host, user) voids it.
-* Claude's real start-of-turn tool list has not been checked against the strict startup rule with a real CLI for this release. If it lists more tools than requested, Claude write turns stop before editing (fail closed). Whether a read-only board Codex seat can start sub-agents is also unverified. `doctor --containment` answers both and has not been run against the real CLIs for this release.
+* Claude's real start-of-turn tool list has not been checked against the strict startup rule with a real CLI for this release. If it lists more tools than requested, Claude write turns stop before editing (fail closed). `doctor --containment` was run once with the real CLIs (see [Containment evidence](#containment-evidence)). Its Claude cases were inconclusive, so Claude write seats still need a passed write check.
 * Codex containment on macOS and Linux is untested on real machines. That is one reason Codex edits are off everywhere.
+* Codex loads your global `~/.codex` AGENTS.md, skills list and multi agent prompt even with `--ignore-user-config`. Personal instructions can override the board's instructions and add input tokens to every Codex turn.
+* Real CLI runs have only been done on Windows 11.
 
 ## Containment evidence
 
-`doctor --containment` runs the real Claude and Codex CLIs on cheap models in a temporary repository. It reports whether writes stayed inside the worktree (inside, absolute, `../`, prefix sibling, `CANARY.txt`, the worktree's `.git` file, links, Windows `\\?\` and UNC paths) and whether a read-only Codex seat can start sub-agents. It prints its plan first, runs only with `--yes`, never touches your project and never writes a check record.
+`doctor --containment` runs the real Claude and Codex CLIs on cheap models in a temporary repository. It has been run once. It reports whether writes stayed inside the worktree (inside, absolute, `../`, prefix sibling, `CANARY.txt`, the worktree's `.git` file, links, Windows `\\?\` and UNC paths) and whether a read-only Codex seat can start sub-agents. It prints its plan first, runs only with `--yes`, never touches your project and never writes a check record.
 
 Result on 2026-10-08, Windows 11, claude-code 2.1.291 and codex-cli 0.160.0:
 
 * **Claude: inconclusive.** The model did not attempt the write outside the worktree, so the run cannot show that the CLI refused it.
-* **Codex: direct writes stay off on every platform.** Codex works through patch mode, so the board applies its diffs inside the item worktree. Codex sub-agents can start even with `features.multi_agent=false`, and they inherit the parent's read-only policy.
+* **Codex: direct writes stay off on every platform.** Codex works through patch mode, so the board applies its diffs inside the item worktree. A read-only Codex seat could start a sub-agent despite `features.multi_agent=false`, and the sub-agent inherited the read-only sandbox.
 
-Codex sandbox behavior is being handled in a private report to OpenAI, so this section does not describe it further. Neither result is evidence for macOS or Linux. Run the command on your own machine to get evidence there.
+Neither result is evidence for macOS or Linux. Run the command on your own machine to get evidence there.
 
 ## Supported versions
 

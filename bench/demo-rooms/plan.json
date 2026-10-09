@@ -1,86 +1,194 @@
 {
   "id": "demo-plan",
   "kind": "plan",
-  "title": "Add --json to taskly",
-  "status": "done",
-  "created": "2026-10-01T09:10:00.000Z",
-  "round": 0,
-  "goal": "Add a frozen --json output to the taskly CLI",
-  "planRevision": 1,
-  "planHash": "0000000000000000000000000000000000000000000000000000000000000001",
+  "title": "Add a --json flag to the taskly list command, following the ",
+  "status": "approved",
+  "created": "2026-10-09T11:49:01.508Z",
+  "round": "plan",
+  "messages": [
+    {
+      "id": "mv0wjykmo2bz",
+      "ts": "2026-10-09T11:49:01.510Z",
+      "streaming": false,
+      "seatId": "user",
+      "name": "You",
+      "text": "Add a --json flag to the taskly list command, following the council outcome. Plan at most 2 small items."
+    },
+    {
+      "id": "mv0wjykobj7l",
+      "ts": "2026-10-09T11:49:01.512Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "Planning from the council \"Should taskly add a --json flag to list, and what should it \". No debate runs for this plan."
+    },
+    {
+      "id": "mv0wjykr426v",
+      "ts": "2026-10-09T11:49:01.515Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#e07a52",
+      "agent": "claude",
+      "round": "plan",
+      "label": "plan",
+      "text": "```json\n{\n  \"goal\": \"Add a --json flag to the taskly list command, following the council outcome (option 1). The default text output stays unchanged. With --json, stdout contains only a JSON array of {id, title, done}. The format lives in a separate toJSON helper, and list() stays text-only. The README documents both modes. The scripting consumer is unverified, but the council recommended proceeding. The plan uses 2 small items, one for the code and one for the docs.\",\n  \"items\": [\n    {\n      \"id\": \"list-json-flag\",\n      \"title\": \"Add --json output mode to list\",\n      \"spec\": \"Edit src/list.js only. Keep tasks, formatText and list(all) behaviour unchanged; list still returns the text form. Add next to list: function toJSON(all) { return JSON.stringify(all.map(({ id, title, done }) => ({ id, title, done })), null, 2); }. Export it: module.exports = { list, formatText, toJSON }. Replace the main guard on line 9 with: if (require.main === module) console.log(process.argv.includes('--json') ? toJSON(tasks) : list(tasks)); In JSON mode stdout must contain only the array (plus console.log's trailing newline). Do not write anything else to stdout. Do not change package.json: bin points directly at src/list.js, so argv is [node, script, 'list', '--json'] and includes('--json') is the check. No new dependencies. Add no comments.\",\n      \"owns\": [\"src/list.js\"],\n      \"dependsOn\": [],\n      \"difficulty\": \"easy\",\n      \"seatId\": null,\n      \"checks\": [\n        { \"name\": \"default output runs\", \"cmd\": \"node src/list.js\" },\n        { \"name\": \"json output is a 3-item array\", \"cmd\": \"node -e \\\"const o=require('child_process').execFileSync(process.execPath,['src/list.js','--json']).toString();const a=JSON.parse(o);if(!Array.isArray(a)||a.length!==3)process.exit(1)\\\"\" }\n      ]\n    },\n    {\n      \"id\": \"readme-json-docs\",\n      \"title\": \"Document list --json in README\",\n      \"spec\": \"Edit README.md only. Keep the existing line 5 (taskly list) as the text-mode entry, with its wording and column alignment. Add a second usage line in the same indented block: taskly list --json, described as printing every task as a JSON array of {id, title, done}. State that the default output is unchanged and that --json writes only the array to stdout, so it can be piped. Keep the edit short. Do not edit other files.\",\n      \"owns\": [\"README.md\"],\n      \"dependsOn\": [],\n      \"difficulty\": \"easy\",\n      \"seatId\": null,\n      \"checks\": [\n        { \"name\": \"readme mentions --json\", \"cmd\": \"node -e \\\"if(!require('fs').readFileSync('README.md','utf8').includes('--json'))process.exit(1)\\\"\" }\n      ]\n    }\n  ]\n}\n```",
+      "error": null,
+      "failed": false,
+      "failure": null,
+      "ended": "2026-10-09T11:49:30.097Z",
+      "tokens": 7664,
+      "cached": 42421,
+      "cost": 0.11393219999999998,
+      "effort": "low",
+      "model": "claude-haiku-5-5",
+      "tools": "read",
+      "mode": "read"
+    },
+    {
+      "id": "mv0wkkmsxksq",
+      "ts": "2026-10-09T11:49:30.100Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "Plan revision 1 is ready: 2 item(s). Approve it, edit it or reject it. Nothing is built before you approve."
+    },
+    {
+      "id": "mv0wkltxnh9r",
+      "ts": "2026-10-09T11:49:31.653Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "You approved revision 1 (8ac798470e04)."
+    }
+  ],
+  "goal": "Add a --json flag to the taskly list command, following the council outcome. Plan at most 2 small items.",
+  "topic": "Add a --json flag to the taskly list command, following the council outcome. Plan at most 2 small items.",
+  "seatIds": [],
+  "rounds": 1,
+  "scoutId": null,
+  "synthId": null,
+  "managerId": "claude",
+  "withContext": true,
+  "overrides": {},
+  "phase": "plan",
+  "councilId": "demo-council",
   "plan": {
-    "goal": "Add a frozen --json output to the taskly CLI",
+    "goal": "Add a --json flag to the taskly list command, following the council outcome (option 1). The default text output stays unchanged. With --json, stdout contains only a JSON array of {id, title, done}. The format lives in a separate toJSON helper, and list() stays text-only. The README documents both modes. The scripting consumer is unverified, but the council recommended proceeding. The plan uses 2 small items, one for the code and one for the docs.",
     "items": [
       {
-        "id": "format-json",
-        "title": "Add --json output to list",
-        "difficulty": "easy",
+        "id": "list-json-flag",
+        "title": "Add --json output mode to list",
+        "spec": "Edit src/list.js only. Keep tasks, formatText and list(all) behaviour unchanged; list still returns the text form. Add next to list: function toJSON(all) { return JSON.stringify(all.map(({ id, title, done }) => ({ id, title, done })), null, 2); }. Export it: module.exports = { list, formatText, toJSON }. Replace the main guard on line 9 with: if (require.main === module) console.log(process.argv.includes('--json') ? toJSON(tasks) : list(tasks)); In JSON mode stdout must contain only the array (plus console.log's trailing newline). Do not write anything else to stdout. Do not change package.json: bin points directly at src/list.js, so argv is [node, script, 'list', '--json'] and includes('--json') is the check. No new dependencies. Add no comments.",
         "owns": [
-          "src/format.js"
+          "src/list.js"
         ],
         "dependsOn": [],
-        "spec": "Print one JSON object per task with id, title, done when --json is passed.",
-        "checks": []
+        "difficulty": "easy",
+        "seatId": null,
+        "proposedChecks": [
+          {
+            "name": "default output runs",
+            "cmd": "node src/list.js"
+          },
+          {
+            "name": "json output is a 3-item array",
+            "cmd": "node -e \"const o=require('child_process').execFileSync(process.execPath,['src/list.js','--json']).toString();const a=JSON.parse(o);if(!Array.isArray(a)||a.length!==3)process.exit(1)\""
+          }
+        ]
       },
       {
-        "id": "pin-schema",
-        "title": "Pin the JSON field names in a test",
-        "difficulty": "easy",
-        "owns": [
-          "test/format.test.js"
-        ],
-        "dependsOn": [
-          "format-json"
-        ],
-        "spec": "Add a node:test that asserts the exact keys of a --json line.",
-        "checks": []
-      },
-      {
-        "id": "docs-json",
-        "title": "Document the flag in the README",
-        "difficulty": "easy",
+        "id": "readme-json-docs",
+        "title": "Document list --json in README",
+        "spec": "Edit README.md only. Keep the existing line 5 (taskly list) as the text-mode entry, with its wording and column alignment. Add a second usage line in the same indented block: taskly list --json, described as printing every task as a JSON array of {id, title, done}. State that the default output is unchanged and that --json writes only the array to stdout, so it can be piped. Keep the edit short. Do not edit other files.",
         "owns": [
           "README.md"
         ],
-        "dependsOn": [
-          "format-json"
-        ],
-        "spec": "Add a short --json section with one example line.",
-        "checks": []
+        "dependsOn": [],
+        "difficulty": "easy",
+        "seatId": null,
+        "proposedChecks": [
+          {
+            "name": "readme mentions --json",
+            "cmd": "node -e \"if(!require('fs').readFileSync('README.md','utf8').includes('--json'))process.exit(1)\""
+          }
+        ]
       }
     ]
   },
+  "planRevision": 1,
+  "planHash": "8ac798470e04c31b630650302f61b018086c4a5585ac49848db5b3ec985aacd2",
+  "revisions": [
+    {
+      "revision": 1,
+      "hash": "8ac798470e04c31b630650302f61b018086c4a5585ac49848db5b3ec985aacd2",
+      "by": "manager",
+      "at": "2026-10-09T11:49:30.100Z",
+      "plan": {
+        "goal": "Add a --json flag to the taskly list command, following the council outcome (option 1). The default text output stays unchanged. With --json, stdout contains only a JSON array of {id, title, done}. The format lives in a separate toJSON helper, and list() stays text-only. The README documents both modes. The scripting consumer is unverified, but the council recommended proceeding. The plan uses 2 small items, one for the code and one for the docs.",
+        "items": [
+          {
+            "id": "list-json-flag",
+            "title": "Add --json output mode to list",
+            "spec": "Edit src/list.js only. Keep tasks, formatText and list(all) behaviour unchanged; list still returns the text form. Add next to list: function toJSON(all) { return JSON.stringify(all.map(({ id, title, done }) => ({ id, title, done })), null, 2); }. Export it: module.exports = { list, formatText, toJSON }. Replace the main guard on line 9 with: if (require.main === module) console.log(process.argv.includes('--json') ? toJSON(tasks) : list(tasks)); In JSON mode stdout must contain only the array (plus console.log's trailing newline). Do not write anything else to stdout. Do not change package.json: bin points directly at src/list.js, so argv is [node, script, 'list', '--json'] and includes('--json') is the check. No new dependencies. Add no comments.",
+            "owns": [
+              "src/list.js"
+            ],
+            "dependsOn": [],
+            "difficulty": "easy",
+            "seatId": null,
+            "proposedChecks": [
+              {
+                "name": "default output runs",
+                "cmd": "node src/list.js"
+              },
+              {
+                "name": "json output is a 3-item array",
+                "cmd": "node -e \"const o=require('child_process').execFileSync(process.execPath,['src/list.js','--json']).toString();const a=JSON.parse(o);if(!Array.isArray(a)||a.length!==3)process.exit(1)\""
+              }
+            ]
+          },
+          {
+            "id": "readme-json-docs",
+            "title": "Document list --json in README",
+            "spec": "Edit README.md only. Keep the existing line 5 (taskly list) as the text-mode entry, with its wording and column alignment. Add a second usage line in the same indented block: taskly list --json, described as printing every task as a JSON array of {id, title, done}. State that the default output is unchanged and that --json writes only the array to stdout, so it can be piped. Keep the edit short. Do not edit other files.",
+            "owns": [
+              "README.md"
+            ],
+            "dependsOn": [],
+            "difficulty": "easy",
+            "seatId": null,
+            "proposedChecks": [
+              {
+                "name": "readme mentions --json",
+                "cmd": "node -e \"if(!require('fs').readFileSync('README.md','utf8').includes('--json'))process.exit(1)\""
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
   "approval": {
     "decision": "approved",
-    "hash": "0000000000000000000000000000000000000000000000000000000000000001"
+    "revision": 1,
+    "hash": "8ac798470e04c31b630650302f61b018086c4a5585ac49848db5b3ec985aacd2",
+    "at": "2026-10-09T11:49:31.653Z",
+    "checks": 0
   },
   "buildIds": [
     "demo-build"
   ],
-  "messages": [
-    {
-      "id": "demo-plan-m9",
-      "ts": "2026-10-01T09:10:01.000Z",
-      "streaming": false,
-      "seatId": "system",
-      "name": "Board",
-      "color": "#888888",
-      "agent": "system",
-      "round": 0,
-      "label": "",
-      "text": "Demo room, prerecorded. No agent ran to produce it."
-    },
-    {
-      "id": "demo-plan-m10",
-      "ts": "2026-10-01T09:10:40.000Z",
-      "streaming": false,
-      "seatId": "sol",
-      "name": "Sol",
-      "color": "#3fb68b",
-      "agent": "codex",
-      "round": 1,
-      "label": "Plan",
-      "text": "Three small items. format-json first, then the test and the docs in any order."
+  "threads": {
+    "claude:plan": "cb35bb1e-a42d-4ed0-a37c-df52688dd071"
+  },
+  "usage": {
+    "tokens": 7664,
+    "cached": 42421,
+    "cost": 0.11393219999999998,
+    "perSeat": {
+      "claude": 7664
     }
-  ]
+  },
+  "recordedAt": "2026-10-09T11:50:14.141Z"
 }

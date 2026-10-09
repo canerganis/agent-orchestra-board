@@ -35,24 +35,25 @@ test('demo starts on a temporary copy of the sample project and loads the record
   assert.match(demo.url, new RegExp(`^http://localhost:${demo.port}/\\?t=`));
 });
 
-test('serves a finished Council with synthesis and a build with two applied items and one waiting', async () => {
+test('serves the recorded real run: a finished Council with synthesis, an approved plan and a build waiting for you', async () => {
   const st = await request(demo.port, 'GET', '/api/state', { cookie });
   assert.equal(st.status, 200);
   const byId = Object.fromEntries(st.json.rooms.map((r) => [r.id, r]));
   const council = byId['demo-council'];
   assert.equal(council.status, 'done');
-  assert.ok(council.messages.some((m) => m.label === 'Synthesis' && m.id === council.resultId));
+  assert.ok(council.messages.some((m) => /synthesis/i.test(m.label || '') && m.id === council.resultId));
   const build = byId['demo-build'];
-  assert.deepEqual(Object.values(build.items).map((i) => i.status).sort(), ['applied', 'applied', 'passed']);
+  assert.equal(build.status, 'needs-you');
+  assert.ok(Object.values(build.items).some((i) => i.status === 'passed'), 'at least one item passed its review');
+  assert.equal(byId['demo-plan'].status, 'approved');
   const one = await request(demo.port, 'GET', '/api/rooms/demo-build', { cookie });
   assert.equal(one.json.kind, 'build');
 });
 
-test('the page carries the "Demo, no agents run" banner', async () => {
+test('the page carries the recorded run banner with its date', async () => {
   const r = await request(demo.port, 'GET', '/', { cookie });
   assert.equal(r.status, 200);
-  assert.ok(r.text.includes(MESSAGE));
-  assert.equal(MESSAGE, 'Demo, no agents run');
+  assert.match(r.text, /Recorded from a real run on \d{4}-\d{2}-\d{2}\. No agents run now\./);
 });
 
 test('everything that could start work is refused, and spawn is never called', async () => {

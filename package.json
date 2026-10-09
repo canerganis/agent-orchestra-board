@@ -40,6 +40,7 @@
   "scripts": {
     "start": "node bin/agent-orchestra-board.js",
     "test": "node --test --test-concurrency=4",
+    "test:real": "node --test real-tests/cli.real.js",
     "doctor": "node bin/agent-orchestra-board.js doctor"
   }
 }

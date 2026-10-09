@@ -1,255 +1,312 @@
 {
   "id": "demo-build",
   "kind": "build",
-  "title": "Build: Add a frozen --json output to the taskly CLI",
+  "title": "Build: Add a --json flag to the taskly list command, foll",
   "status": "needs-you",
-  "created": "2026-10-01T09:20:00.000Z",
-  "round": 0,
+  "created": "2026-10-09T11:49:31.958Z",
+  "round": 1,
+  "messages": [
+    {
+      "id": "mv0wkm2ihqmx",
+      "ts": "2026-10-09T11:49:31.962Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "Roles: manager → Claude, hard → Claude, medium → Claude, easy → Claude, reviewer → Luna."
+    },
+    {
+      "id": "mv0wkm2j4v2x",
+      "ts": "2026-10-09T11:49:31.963Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "Mode: propose (propose mode was requested). Builders propose changes; no files are edited."
+    },
+    {
+      "id": "mv0wkm2lyt4k",
+      "ts": "2026-10-09T11:49:31.965Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "Each passing item exports its diff as a patch file under .orchestra/proposals. It is untested: read it before you apply it."
+    },
+    {
+      "id": "mv0wkm2vy1af",
+      "ts": "2026-10-09T11:49:31.975Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#e07a52",
+      "agent": "claude",
+      "round": 1,
+      "label": "proposal · low",
+      "text": "The change adds `toJSON` next to `list`, exports it, and switches the main guard to emit JSON when `--json` is in argv. `list`, `formatText`, and the data stay as they are, so the default text output is unchanged. Only `src/list.js` is touched; `package.json` is not.\n\n```diff\ndiff --git a/src/list.js b/src/list.js\n--- a/src/list.js\n+++ b/src/list.js\n@@ -6,5 +6,6 @@\n ];\n function formatText(task) { return `${task.done ? \"[x]\" : \"[ ]\"} ${task.id} ${task.title}`; }\n function list(all) { return all.map(formatText).join(\"\\n\"); }\n-if (require.main === module) console.log(list(tasks));\n-module.exports = { list, formatText };\n+function toJSON(all) { return JSON.stringify(all.map(({ id, title, done }) => ({ id, title, done })), null, 2); }\n+if (require.main === module) console.log(process.argv.includes('--json') ? toJSON(tasks) : list(tasks));\n+module.exports = { list, formatText, toJSON };\n```",
+      "error": null,
+      "failed": false,
+      "failure": null,
+      "ended": "2026-10-09T11:49:41.260Z",
+      "tokens": 3439,
+      "cached": 25708,
+      "cost": 0.049677599999999995,
+      "effort": "low",
+      "model": "claude-haiku-5-5",
+      "tools": "read",
+      "mode": "read"
+    },
+    {
+      "id": "mv0wkt8xvjds",
+      "ts": "2026-10-09T11:49:41.265Z",
+      "streaming": false,
+      "seatId": "luna",
+      "name": "Luna",
+      "color": "#7aa2ff",
+      "agent": "codex",
+      "round": 1,
+      "label": "review",
+      "text": "I’ll inspect the current `src/list.js` and repository context, then compare the proposed diff against the spec.\n\nNo findings. The proposed change follows the spec: `list` remains text-only, `toJSON` formats only the requested fields, and the main guard selects JSON output when `--json` is present. The default text path and `package.json` remain unchanged.\n\nVERDICT: PASS",
+      "error": null,
+      "failed": false,
+      "failure": null,
+      "ended": "2026-10-09T11:49:52.114Z",
+      "tokens": 18558,
+      "cached": 30208,
+      "cost": 0,
+      "effort": "low",
+      "model": "gpt-6-luna",
+      "tools": "read",
+      "mode": "read",
+      "verdict": "pass"
+    },
+    {
+      "id": "mv0wl1qv03oq",
+      "ts": "2026-10-09T11:49:52.279Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "list-json-flag: patch exported to .orchestra/proposals/demo-build/list-json-flag-r1.patch (1 file(s), sha256 2d47ceec122f), git apply --check ok. Untested."
+    },
+    {
+      "id": "mv0wl1r6yzzy",
+      "ts": "2026-10-09T11:49:52.290Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#e07a52",
+      "agent": "claude",
+      "round": 1,
+      "label": "proposal · low",
+      "text": "The README edit adds a `--json` usage line in the existing indented block and a short paragraph after it. The existing line 5 is unchanged.\n\nOne trade-off: `taskly list --json` is 18 characters, so its description can't start at the same column as line 5's description (column 15) without changing line 5. I kept line 5 byte-identical, as the spec asks, and used a two-space gap, so the descriptions don't line up exactly.\n\n```diff\ndiff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -3,3 +3,7 @@\n A tiny task list CLI.\n \n     taskly list    print every task, one per line\n+    taskly list --json  print every task as a JSON array of {id, title, done}\n+\n+The default output of `taskly list` is unchanged. `--json` writes only the array to stdout, so it can be piped.\n```",
+      "error": null,
+      "failed": false,
+      "failure": null,
+      "ended": "2026-10-09T11:50:06.847Z",
+      "tokens": 3860,
+      "cached": 25559,
+      "cost": 0.061859800000000006,
+      "effort": "low",
+      "model": "claude-haiku-5-5",
+      "tools": "read",
+      "mode": "read"
+    },
+    {
+      "id": "mv0wlczrg0ua",
+      "ts": "2026-10-09T11:50:06.855Z",
+      "streaming": false,
+      "seatId": "luna",
+      "name": "Luna",
+      "color": "#7aa2ff",
+      "agent": "codex",
+      "round": 1,
+      "label": "review",
+      "text": "No findings.\n\nVERDICT: PASS",
+      "error": null,
+      "failed": false,
+      "failure": null,
+      "ended": "2026-10-09T11:50:13.982Z",
+      "tokens": 4322,
+      "cached": 27136,
+      "cost": 0,
+      "effort": "low",
+      "model": "gpt-6-luna",
+      "tools": "read",
+      "mode": "read",
+      "verdict": "pass"
+    },
+    {
+      "id": "mv0wlijcx759",
+      "ts": "2026-10-09T11:50:14.040Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "readme-json-docs: no patch exported: git cannot read the patch: error: corrupt patch at <stdin>:11."
+    },
+    {
+      "id": "mv0wlijec93q",
+      "ts": "2026-10-09T11:50:14.042Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "readme-json-docs: the review passed but there is no usable patch: git cannot read the patch: error: corrupt patch at <stdin>:11. Dependents wait; resume to build it again."
+    },
+    {
+      "id": "mv0wlijhh71j",
+      "ts": "2026-10-09T11:50:14.045Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "system",
+      "text": "These items need you: readme-json-docs (needs-artifact). Resume to retry them, or discard them."
+    }
+  ],
   "planRoomId": "demo-plan",
   "planRevision": 1,
-  "planHash": "0000000000000000000000000000000000000000000000000000000000000001",
+  "planHash": "8ac798470e04c31b630650302f61b018086c4a5585ac49848db5b3ec985aacd2",
   "mode": "propose",
-  "modeReason": "demo, nothing is edited",
-  "roles": {},
+  "modeReason": "propose mode was requested",
+  "roles": {
+    "manager": "claude",
+    "hard": "claude",
+    "medium": "claude",
+    "easy": "claude",
+    "reviewer": "luna"
+  },
   "resolved": {
-    "builder": "claude",
+    "manager": "claude",
+    "hard": "claude",
+    "medium": "claude",
+    "easy": "claude",
     "reviewer": "luna"
   },
   "roleNotes": [],
   "baseCommit": null,
   "expectedTree": null,
-  "maxRounds": 3,
+  "maxRounds": 2,
   "escalate": false,
   "order": [
-    "format-json",
-    "pin-schema",
-    "docs-json"
+    "list-json-flag",
+    "readme-json-docs"
   ],
-  "applied": [
-    "format-json",
-    "pin-schema"
-  ],
-  "baseApplied": [],
-  "resumeNeeded": false,
   "items": {
-    "format-json": {
-      "id": "format-json",
-      "title": "Add --json output to list",
+    "list-json-flag": {
+      "id": "list-json-flag",
+      "title": "Add --json output mode to list",
       "difficulty": "easy",
       "owns": [
-        "src/format.js"
+        "src/list.js"
       ],
       "dependsOn": [],
-      "itemHash": "demo",
-      "status": "applied",
-      "builderId": "claude",
-      "reviewerId": "luna",
-      "selfReview": false,
-      "rounds": 1,
-      "attempts": 1,
-      "worktree": null,
-      "proposal": {
-        "summary": "Added a formatJson helper and a --json branch in list."
-      },
-      "review": {
-        "verdict": "PASS",
-        "text": "PASS. Small and covered."
-      },
-      "exported": null,
-      "error": null,
-      "checks": []
-    },
-    "pin-schema": {
-      "id": "pin-schema",
-      "title": "Pin the JSON field names in a test",
-      "difficulty": "easy",
-      "owns": [
-        "test/format.test.js"
-      ],
-      "dependsOn": [
-        "format-json"
-      ],
-      "itemHash": "demo",
-      "status": "applied",
-      "builderId": "claude",
-      "reviewerId": "luna",
-      "selfReview": false,
-      "rounds": 1,
-      "attempts": 1,
-      "worktree": null,
-      "proposal": {
-        "summary": "Test pins the keys id, title, done."
-      },
-      "review": {
-        "verdict": "PASS",
-        "text": "PASS. Keys asserted exactly."
-      },
-      "exported": null,
-      "error": null,
-      "checks": []
-    },
-    "docs-json": {
-      "id": "docs-json",
-      "title": "Document the flag in the README",
-      "difficulty": "easy",
-      "owns": [
-        "README.md"
-      ],
-      "dependsOn": [
-        "format-json"
-      ],
-      "itemHash": "demo",
+      "itemHash": "df981348032f19e23f0f1bf8022a9607db701efc07898703e215e00d80d8f498",
       "status": "passed",
       "builderId": "claude",
       "reviewerId": "luna",
       "selfReview": false,
       "rounds": 1,
-      "attempts": 1,
+      "attempts": 0,
       "worktree": null,
       "proposal": {
-        "summary": "README section with one example line."
+        "round": 1,
+        "hash": "d3cc162fa20c5791d25ab07aa9972c3d5c1988b980fbed0a7c39b22aa5409c02",
+        "file": null,
+        "files": [],
+        "bytes": 898,
+        "frozenAt": "2026-10-09T11:49:41.262Z",
+        "msgId": "mv0wkm2vy1af"
       },
       "review": {
-        "verdict": "PASS",
-        "text": "PASS. Waiting for you to apply it."
+        "hash": "d3cc162fa20c5791d25ab07aa9972c3d5c1988b980fbed0a7c39b22aa5409c02",
+        "verdict": "pass",
+        "msgId": "mv0wkt8xvjds",
+        "seatId": "luna",
+        "at": "2026-10-09T11:49:52.117Z"
       },
-      "exported": null,
+      "exported": {
+        "file": ".orchestra/proposals/demo-build/list-json-flag-r1.patch",
+        "rel": "proposals/demo-build/list-json-flag-r1.patch",
+        "hash": "2d47ceec122f942a24ea2d269a2ba9b7558c0924e1310f51e9bf9d8d92e37c11",
+        "files": [
+          "src/list.js"
+        ],
+        "bytes": 618,
+        "check": {
+          "ok": true,
+          "reason": null
+        },
+        "untested": true,
+        "note": "untested: the builder ran read only and the board ran no tests; read the diff before you apply it",
+        "round": 1,
+        "at": "2026-10-09T11:49:52.279Z"
+      },
       "error": null,
+      "checks": []
+    },
+    "readme-json-docs": {
+      "id": "readme-json-docs",
+      "title": "Document list --json in README",
+      "difficulty": "easy",
+      "owns": [
+        "README.md"
+      ],
+      "dependsOn": [],
+      "itemHash": "0f57d5e844da1178801d9dcca90cee0f0804c913e7aa1f749d2004b5a12c3c29",
+      "status": "needs-artifact",
+      "builderId": "claude",
+      "reviewerId": "luna",
+      "selfReview": false,
+      "rounds": 1,
+      "attempts": 0,
+      "worktree": null,
+      "proposal": {
+        "round": 1,
+        "hash": "929c807cd232bba217ff664394fabe229f1e12b3406a833c512339da73e104b0",
+        "file": null,
+        "files": [],
+        "bytes": 788,
+        "frozenAt": "2026-10-09T11:50:06.849Z",
+        "msgId": "mv0wl1r6yzzy"
+      },
+      "review": {
+        "hash": "929c807cd232bba217ff664394fabe229f1e12b3406a833c512339da73e104b0",
+        "verdict": "pass",
+        "msgId": "mv0wlczrg0ua",
+        "seatId": "luna",
+        "at": "2026-10-09T11:50:13.985Z"
+      },
+      "exported": {
+        "file": null,
+        "rel": null,
+        "hash": null,
+        "files": [],
+        "bytes": 0,
+        "check": {
+          "ok": false,
+          "reason": "git cannot read the patch: error: corrupt patch at <stdin>:11"
+        },
+        "refused": "unreadable",
+        "untested": true,
+        "round": 1,
+        "at": "2026-10-09T11:50:14.040Z"
+      },
+      "error": "the review passed but there is no usable patch: git cannot read the patch: error: corrupt patch at <stdin>:11",
       "checks": []
     }
   },
-  "messages": [
-    {
-      "id": "demo-build-m11",
-      "ts": "2026-10-01T09:20:01.000Z",
-      "streaming": false,
-      "seatId": "system",
-      "name": "Board",
-      "color": "#888888",
-      "agent": "system",
-      "round": 0,
-      "label": "",
-      "text": "Demo room, prerecorded. No agent ran to produce it."
-    },
-    {
-      "id": "demo-build-m12",
-      "ts": "2026-10-01T09:20:02.000Z",
-      "streaming": false,
-      "seatId": "system",
-      "name": "Board",
-      "color": "#888888",
-      "agent": "system",
-      "round": 0,
-      "label": "",
-      "text": "Roles: builder is Claude, reviewer is Luna."
-    },
-    {
-      "id": "demo-build-m13",
-      "ts": "2026-10-01T09:22:00.000Z",
-      "streaming": false,
-      "seatId": "claude",
-      "name": "Claude",
-      "color": "#d97757",
-      "agent": "claude",
-      "round": 1,
-      "label": "format-json",
-      "text": "Added formatJson in src/format.js and wired --json in list."
-    },
-    {
-      "id": "demo-build-m14",
-      "ts": "2026-10-01T09:22:30.000Z",
-      "streaming": false,
-      "seatId": "luna",
-      "name": "Luna",
-      "color": "#6b8afd",
-      "agent": "codex",
-      "round": 1,
-      "label": "format-json review",
-      "text": "PASS. Small and covered."
-    },
-    {
-      "id": "demo-build-m15",
-      "ts": "2026-10-01T09:23:00.000Z",
-      "streaming": false,
-      "seatId": "system",
-      "name": "Board",
-      "color": "#888888",
-      "agent": "system",
-      "round": 0,
-      "label": "",
-      "text": "format-json applied."
-    },
-    {
-      "id": "demo-build-m16",
-      "ts": "2026-10-01T09:25:00.000Z",
-      "streaming": false,
-      "seatId": "claude",
-      "name": "Claude",
-      "color": "#d97757",
-      "agent": "claude",
-      "round": 1,
-      "label": "pin-schema",
-      "text": "Added test/format.test.js with an exact key assertion."
-    },
-    {
-      "id": "demo-build-m17",
-      "ts": "2026-10-01T09:25:30.000Z",
-      "streaming": false,
-      "seatId": "luna",
-      "name": "Luna",
-      "color": "#6b8afd",
-      "agent": "codex",
-      "round": 1,
-      "label": "pin-schema review",
-      "text": "PASS. Keys asserted exactly."
-    },
-    {
-      "id": "demo-build-m18",
-      "ts": "2026-10-01T09:26:00.000Z",
-      "streaming": false,
-      "seatId": "system",
-      "name": "Board",
-      "color": "#888888",
-      "agent": "system",
-      "round": 0,
-      "label": "",
-      "text": "pin-schema applied."
-    },
-    {
-      "id": "demo-build-m19",
-      "ts": "2026-10-01T09:28:00.000Z",
-      "streaming": false,
-      "seatId": "claude",
-      "name": "Claude",
-      "color": "#d97757",
-      "agent": "claude",
-      "round": 1,
-      "label": "docs-json",
-      "text": "Added a --json section to README.md."
-    },
-    {
-      "id": "demo-build-m20",
-      "ts": "2026-10-01T09:28:30.000Z",
-      "streaming": false,
-      "seatId": "luna",
-      "name": "Luna",
-      "color": "#6b8afd",
-      "agent": "codex",
-      "round": 1,
-      "label": "docs-json review",
-      "text": "PASS. Waiting for you to apply it."
-    },
-    {
-      "id": "demo-build-m21",
-      "ts": "2026-10-01T09:29:00.000Z",
-      "streaming": false,
-      "seatId": "system",
-      "name": "Board",
-      "color": "#888888",
-      "agent": "system",
-      "round": 0,
-      "label": "",
-      "text": "All items passed review. Apply them one at a time from the build view."
+  "applied": [],
+  "baseApplied": [],
+  "resumeNeeded": false,
+  "threads": {
+    "claude:list-json-flag": "bf65c842-6665-4dae-b269-714e3d695f7a",
+    "luna:list-json-flag:review": "01a1207f-616f-7b12-8a81-aefae5893f8d",
+    "claude:readme-json-docs": "c8147506-3455-47be-b521-651b2a5f6e98",
+    "luna:readme-json-docs:review": "01a1207f-c57e-7072-8dd7-446453dbb336"
+  },
+  "usage": {
+    "tokens": 30179,
+    "cached": 108611,
+    "cost": 0.11153740000000001,
+    "perSeat": {
+      "claude": 7299,
+      "luna": 22880
     }
-  ]
+  },
+  "resultId": "mv0wlczrg0ua",
+  "recordedAt": "2026-10-09T11:50:14.141Z"
 }

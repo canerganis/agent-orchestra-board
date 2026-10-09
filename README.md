@@ -9,9 +9,9 @@
 Zero dependencies, runs on your own CLI logins (no API keys). Agents only read your project, except in a Workflow build, where they work inside per-item git worktrees and you apply each reviewed change yourself.
 
 <p align="center">
-  <img src="docs/screenshot-build.png" alt="A Workflow build in Agent Orchestra Board, from the zero token demo: three plan items, each built by Claude and reviewed by Codex Luna; two are applied and one passed review and waits for you. The right panel shows each item with its builder and reviewer." width="100%">
+  <img src="docs/screenshot-build.png" alt="A Workflow build in Agent Orchestra Board, from the demo recorded from a real run: Haiku builds, Luna reviews. One item passed with a patch that git apply --check accepts. The other was stopped as needs-artifact because the model's patch was corrupt." width="100%">
 </p>
-<p align="center"><sub>A finished Council (called Debate in v0.1): scout brief, two rounds, a round verdict from the agents' stance lines, the synthesis, and the live workflow timeline with tokens per turn.</sub></p>
+<p align="center"><sub>The demo build, recorded from a real run on 2026-10-09 (Haiku builds, Luna reviews). One item passed. The other was stopped as needs-artifact because the model's patch was corrupt. The demo banner says so.</sub></p>
 
 ## What you get
 
@@ -27,7 +27,7 @@ Zero dependencies, runs on your own CLI logins (no API keys). Agents only read y
 
 ## Quick start
 
-Try it first without any CLI or model call. The demo opens recorded rooms (a Council, a plan and a build waiting for you) in a temporary folder:
+Try it first without any CLI or model call. The demo replays rooms recorded from a real run on 2026-10-09 (a Council, an approved plan and a build) in a temporary folder:
 
 ```sh
 git clone https://github.com/canerganis/agent-orchestra-board.git
@@ -135,7 +135,7 @@ The raw rooms (sanitized) and a script that recomputes every number are in [docs
 
 ## Safety and permissions
 
-Evidence from the first real containment run, and what it does and does not show, is in [SECURITY.md](SECURITY.md#containment-evidence).
+Evidence from the one real containment run, and what it does and does not show, is in [SECURITY.md](SECURITY.md#containment-evidence).
 
 * **Read-only except in board builds.** Ask, Council, Propose → Review, the plan manager and every reviewer run read turns only: Claude with `--tools Read Grep Glob --permission-mode dontAsk` (a tool outside the list is denied instead of prompting), Codex with `sandbox_mode=read-only`. Read-only is enforced by the vendors' CLIs, not by the board.
 * **Codex writes only through patch mode, on every platform.** Direct Codex file writes are disabled in `src/platform.js`. Nobody has run the check on a real Mac or Linux machine, so no Codex turn gets write access, and no setting, flag, environment variable or seat field turns it on. A Codex seat with write permission builds in **patch mode**: its turn runs read-only and ends with a unified diff; the board checks the diff (owner paths only, no `.git` or `.orchestra`, no absolute or `..` paths, no symlinks or submodules) and applies it inside the item's worktree. A file that changes during that read-only turn quarantines the item.
@@ -147,7 +147,7 @@ Evidence from the first real containment run, and what it does and does not show
 * **The main checkout changes only through Apply.** Apply stages a reviewed change with `git apply --index`. The board never commits.
 * **A guard watches the checkout.** Around each builder write turn the board fingerprints the main checkout, the other worktrees and the worktree's `.git` file. A change quarantines the item and turns writes off for that CLI. This detects; it does not prevent. [SECURITY.md](SECURITY.md#limits) lists what it does not see.
 * **External runs are yours.** *Claude Code, you run it* and *Codex, you run it* run in your own CLI with your own settings, outside all of the above. The board only writes the handoff file, reads the run's files and shows what changed. On the development machine, 206 of 231 Codex sub-agents of past runs ran with full access, which is why the run card shows each sub-agent's sandbox.
-* **`doctor --containment` is opt-in.** `agent-orchestra-board doctor --containment` prints a plan and does nothing more; with `--yes` it starts the real Claude and Codex CLIs on cheap models (`claude-haiku-5-5`, and `gpt-6-luna` at low effort), a few cents, in a temporary repository, and reports whether their sandboxes keep writes inside the worktree, including shell, `..` and absolute-path writes, and whether a read-only Codex seat can start sub-agents. Your project is not touched, it never writes a check record (the in-app write check stays the only way to turn writes on), it refuses to run under `CI` or `GITHUB_ACTIONS`, and plain `doctor` never runs it. It has not been run against the real CLIs for this release.
+* **`doctor --containment` is opt-in.** `agent-orchestra-board doctor --containment` prints a plan and does nothing more; with `--yes` it starts the real Claude and Codex CLIs on cheap models (`claude-haiku-5-5`, and `gpt-6-luna` at low effort), a few cents, in a temporary repository, and reports whether their sandboxes keep writes inside the worktree, including shell, `..` and absolute-path writes, and whether a read-only Codex seat can start sub-agents. Your project is not touched, it never writes a check record (the in-app write check stays the only way to turn writes on), it refuses to run under `CI` or `GITHUB_ACTIONS`, and plain `doctor` never runs it. It was run once with the real CLIs, on 2026-10-08 on Windows 11 (claude-code 2.1.291, codex-cli 0.160.0). The Claude cases were inconclusive, so Claude write seats still need a passed write check. A read-only Codex seat could start a sub-agent despite `features.multi_agent=false`, and the sub-agent inherited the read-only sandbox.
 * **Never uses `--dangerously-skip-permissions`.** Claude write turns use `acceptEdits` instead, and the static check refuses any write argument list that contains a skip or bypass flag.
 * **Localhost only.** The server binds `127.0.0.1`, accepts only local `Host` and `Origin` values (DNS-rebinding and cross-site protection), takes only validated `application/json` POSTs and sends a strict CSP.
 * **Session token.** Each project gets a random token in `.orchestra/session` (mode 0600 on macOS and Linux; on Windows the file inherits the project folder's permissions, so keep the project under your user profile), exchanged for an `HttpOnly; SameSite=Strict` cookie and required on every `/api/*` request. A web page you happen to have open, or another local process, gets `401`. Do not expose the port through a tunnel or reverse proxy.
@@ -163,7 +163,7 @@ Windows 11 is the primary development platform.
 
 * **Use the native CLI installers.** The board spawns the CLIs without a shell, so the `claude.cmd` and `codex.cmd` shims that `npm i -g` creates do not work (Node cannot start a `.cmd` file). Use `claude.exe` and `codex.exe`, or set `ORCHESTRA_CLAUDE_BIN` or `ORCHESTRA_CODEX_BIN` to the full path of an `.exe`. `doctor` flags a `.cmd` shim, and the board team treats that CLI as broken.
 * **Codex sandbox fix.** The Codex sandbox cannot launch the Microsoft Store `pwsh` alias under its restricted token, which fails with access denied. Codex children therefore run with `-c windows.sandbox="unelevated"` and a `PATH` without `WindowsApps`. `taskkill /T /F` stops a seat together with everything it spawned. Codex only writes through patch mode.
-* macOS and Linux run the same code paths minus those two fixes. CI runs the test suite on Ubuntu, macOS and Windows (Node 20, 22, 24) against fake CLIs; real-CLI runs have only been done on Windows 11.
+* macOS and Linux run the same code paths minus those two fixes. CI runs the test suite on Ubuntu, macOS and Windows (Node 20, 22, 24) against recorded real output and fake CLIs. Real CLI runs have only been done on Windows 11.
 
 ## Limitations
 
@@ -177,6 +177,8 @@ Windows 11 is the primary development platform.
 * Claude's real start-of-turn tool list has not been checked against the strict startup rule with a real CLI for this release. If Claude reports more tools than the board asked for, every Claude write turn stops before it edits anything, until the list is reviewed.
 * A build that quarantines an item ends with status `error` and cannot be resumed. Delete it, and start a new build once the write check passes again.
 * The adapters parse `claude --output-format stream-json` and `codex exec --json`. Developed against Codex CLI 0.160.0 and Claude Code CLI 2.1.291 (2026-10-07). `doctor` only checks that each CLI starts and prints its version; it does not check the output format. After upgrading either CLI, send a short Ask message on each CLI you use: if the format changed, the failed message shows an "Unrecognised ... CLI output" error. The lean flags are covered by unit tests on the argument lists, not by a paid run in CI.
+* Codex loads your global `~/.codex` AGENTS.md, skills list and multi agent prompt even with `--ignore-user-config`. Personal instructions such as a reply language can override the board's instructions, and they add input tokens to every Codex turn.
+* Real CLI runs have only been done on Windows 11.
 * One user, one project per board, no remote access, on purpose.
 
 ## FAQ
@@ -206,11 +208,18 @@ Windows 11 is the primary development platform.
 ## Development
 
 ```sh
-npm test                       # node:test; no real CLI is spawned
+npm test                       # node:test; never spawns a real CLI
+OB_REAL=1 npm run test:real    # opt-in, spawns the real CLIs, costs tokens
 node bin/agent-orchestra-board.js doctor --json
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and the [CHANGELOG](CHANGELOG.md). Never point tests at the real CLIs; the suite uses fake ones. Security issues: [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the [CHANGELOG](CHANGELOG.md). `npm test` never runs a real CLI; only the opt-in suite does. Security issues: [SECURITY.md](SECURITY.md).
+
+### Real CLI checks
+
+`npm test` parses real output. `test/fixtures/real/` holds recordings from 2026-10-09 of Claude Code 2.1.291 (claude-haiku-5-5), Codex CLI 0.160.0 (gpt-6-luna low) and the Google Antigravity CLI agy 1.2.17 (gemini-3.8-flash-low), made with the board's own read-only arguments. `test/real-fixtures.test.js` parses all of them, and the fake CLI replays them for normal turns. Synthetic lines remain only for edge cases such as errors, broken JSON and hangs.
+
+An opt-in suite runs the real CLIs: `OB_REAL=1 npm run test:real`. On 2026-10-09 on Windows 11 it passed 10 of 10, with Cursor skipped because it was not installed. It ran a read-only turn and a resume for Claude, Codex and agy, a two seat Council that reached a synthesis, and a Propose and Review chain (Haiku proposes, Luna reviews). It used about 52k net tokens and 0.10 USD. It never runs in CI. Details: [docs/real-tests.md](docs/real-tests.md).
 
 ## License
 

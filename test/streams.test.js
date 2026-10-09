@@ -1,3 +1,5 @@
+// NOTE: fixtures/claude-stream.jsonl and fixtures/codex-stream.jsonl are SYNTHETIC edge cases (two messages, an ignorable
+// error, a split UTF-8 dash) that exact assertions here depend on. Real output is covered by real-fixtures.test.js.
 // Adapter parsers against recorded-style streams: whole feed vs. arbitrary chunking, noise lines,
 // usage/cached math, rate-limit passthrough, error paths. No CLI is run.
 //

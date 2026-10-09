@@ -23,15 +23,22 @@ The board gets four modes (Ask, Council, Workflow, Runs), Plan → Approve → B
 * **Write check with proof of an attempt.** The check asks the CLI to write one file inside its worktree and two outside it (an absolute path and a `../` path). It passes only when the inside file exists, nothing escaped, and the CLI's own tool log shows both outside writes were tried and refused. A check without that proof is `inconclusive` and leaves writes off.
 * **`doctor --containment`.** An opt-in command that runs the real Claude and Codex CLIs on cheap models in a temporary repository and reports whether they keep writes inside the worktree (inside, absolute, `../`, prefix sibling, `CANARY.txt`, the worktree's `.git` file, links, and Windows `\\?\` and UNC paths), and whether a read-only Codex seat can start sub-agents. It prints its plan and runs only with `--yes`, refuses under `CI` or `GITHUB_ACTIONS`, never touches your project and never writes a check record. Plain `doctor` never runs it.
 * **CLI states.** `doctor` reports a `state` per CLI (`ok`, `warn`, `broken`, `missing`) that drives which pickers and engines are offered, and warns when `ORCHESTRA_CLAUDE_BIN` or `ORCHESTRA_CODEX_BIN` is set.
-* **`demo`.** `agent-orchestra-board demo` opens the board on a temporary sample project with recorded rooms (a Council, a plan and a build waiting for you). No CLI is needed and no agent or model runs.
+* **`demo`.** `agent-orchestra-board demo` opens the board on a temporary sample project with recorded rooms (a Council, a plan and a build waiting for you). No CLI is needed and no agent or model runs. The rooms are recorded from a real run on 2026-10-09 (`bench/record-demo.mjs`, Haiku builds, Luna reviews): a Council, an approved plan, and a build where one item passed with a patch that `git apply --check` accepts and the other was stopped as needs-artifact because the model's patch was corrupt. The demo banner says so.
 * **Ledger.** `.orchestra/ledger.jsonl` records every build, review, fix, check, apply and discard with model, effort, tokens of that turn and time, never prompt or result text. `node bench/ledger-report.mjs` prints tokens per accepted change and first pass rates per model.
 * **Acceptance checks (off by default).** A plan can carry check commands per item when you turn checks on for that plan. They run after the change is frozen and before any review, so a failing check goes back to the builder without spending a review. See Security.
 * **Change receipts.** `src/receipt.js` binds the plan hash, the patch sha256, the reviews of that exact hash, the checks and the containment result into one receipt with its own hash, and `verifyReceipt` recomputes it.
 * **Groundwork for v0.3, not used by the UI yet.** Router modules (task classifier, model prior and ladders, profiles with a shadow score), a decision inbox, and read-only adapters for the Google Antigravity CLI (`agy`, which serves Gemini and Claude models on Antigravity's own quota; parsing checked against one real turn of agy 1.2.17 on Windows) and the Cursor CLI (built against recorded fixtures, unverified until tested with the real CLI).
 * **API version 2.** `GET /api/state` carries `apiVersion: 2`, `roomIndex`, `engines` and `watch`; `GET /api/rooms/:id` returns one room in full. New SSE events `engines`, `engine`, `wfRuns`, `wfRun`. See [docs/api.md](docs/api.md).
 
+### Fixed
+
+* A seat update through the API that left out `agent` turned a Claude seat into a Codex seat and reset its effort and permission. Fields left out now keep the seat's values. The real demo recorder found this.
+* Read turns now tell the agent it may read files and run read-only commands.
+
 ### Changed
 
+* `npm test` now parses real output. `test/fixtures/real/` holds recordings from 2026-10-09 of Claude Code 2.1.291 (claude-haiku-5-5), Codex CLI 0.160.0 (gpt-6-luna low) and the Google Antigravity CLI agy 1.2.17 (gemini-3.8-flash-low), made with the board's own read-only arguments. `test/real-fixtures.test.js` parses all of them, and the fake CLI replays them for normal turns. Synthetic lines remain only for edge cases (errors, broken JSON, hangs). CI runs this on Linux, macOS and Windows with Node 20, 22 and 24.
+* An opt-in suite runs the real CLIs: `OB_REAL=1 npm run test:real`. On 2026-10-09 on Windows 11 it passed 10 of 10 (Cursor skipped: not installed): a read-only turn and a resume for Claude, Codex and agy, a two seat Council that reached a synthesis, and a Propose and Review chain (Haiku proposes, Luna reviews). About 52k net tokens and 0.10 USD. It never runs in CI.
 * Write seats no longer edit the project directly. A write turn runs only in a Build item's worktree, and only when the gate allows that seat and directory. The v0.1 path that let a Claude write seat edit any file in the project is removed.
 * Ask, Council and Propose → Review are read-only. A write seat in one of them runs read-only, and Propose → Review says so in the room.
 * Debate is called Council in the UI. Room kinds, routes and stored rooms are unchanged.
@@ -62,13 +69,15 @@ The board gets four modes (Ask, Council, Workflow, Runs), Plan → Approve → B
 * External runs (*Claude Code, you run it*, *Codex, you run it*) are outside the write gate and can edit your checkout with your own CLI settings. The board labels them, shows each Codex sub-agent's sandbox and shows what changed; it cannot prevent anything.
 * Runs and the external engines parse undocumented Claude Code journals and Codex rollouts, which can change with any CLI update.
 * `doctor --containment` was run once with the real CLIs on Windows 11 (claude-code 2.1.291, codex-cli 0.160.0). The Claude cases were inconclusive because the model did not attempt the outside writes, so Claude write seats still need a passed write check. See [SECURITY.md](SECURITY.md#containment-evidence).
-* A read-only board Codex seat can start sub-agents even with `features.multi_agent=false`. In that run the sub-agent inherited the read-only sandbox.
+* A read-only board Codex seat could start a sub-agent even with `features.multi_agent=false`. In that run the sub-agent inherited the read-only sandbox.
+* Codex loads your global `~/.codex` AGENTS.md, skills list and multi agent prompt even with `--ignore-user-config`. Personal instructions such as a reply language can override the board's instructions and add input tokens to every Codex turn.
+* Real CLI runs have only been done on Windows 11.
 * Acceptance checks run your plan's commands unsandboxed with your permissions, which is why they are off by default. On Windows, background processes a check starts may outlive it.
 * The home screen is built for desktop browsers and overflows at phone width.
 * The runtime guard detects changes; it does not prevent them. It does not see ignored files, files outside the project, or a change that is undone before the turn ends. Its main-checkout fingerprint excludes `.orchestra/`.
 * A plan item's `seatId` overrides the tier mapping, also when the manager set it, and the plan table does not show it. Check the plan JSON before you approve.
 * The write check runs one prompt once, on one machine. It is evidence for that CLI version, not a proof of the sandbox in general.
-* The test suite uses fake CLIs. No test runs a real CLI.
+* `npm test` never spawns a real CLI. Only the opt-in `OB_REAL=1 npm run test:real` does, and it has been run on Windows 11 only.
 * A build that quarantines an item ends with status `error` and cannot be resumed. Delete it (this removes its worktrees and proposals) and start a new one after the write check passes.
 * Starting a write build needs a clean checkout. Apply stages changes and never commits: review `git diff --cached` and commit yourself.
 * Launching Claude Code or Codex runs from the board is not part of this release; Codex launch is planned for v0.3.

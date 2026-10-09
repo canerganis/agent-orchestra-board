@@ -317,7 +317,7 @@ function createRunner({ store, seats, limits, settings, broadcast, spawnFn = spa
       // A worktree turn always runs in that worktree, whatever the seat's target says.
       const tgt = worktree ? { cwd: worktree, preface: '' } : withTarget ? resolveTarget(seat, PROJECT) : { cwd: PROJECT, preface: '' };
       // Role header and target scope go out once per thread; a resumed thread already has them.
-      const header = thread ? '' : `[You are "${seat.name}" (${seat.role || 'agent'}) in a multi-agent orchestra of Claude and Codex seats. Reply in ${settings.lang}. Be concise.${mode !== 'write' ? ' Do not modify files.' : ''}]\n\n`;
+      const header = thread ? '' : `[You are "${seat.name}" (${seat.role || 'agent'}) in a multi-agent orchestra of Claude and Codex seats. Reply in ${settings.lang}. Be concise.${mode === 'read' ? ' You can read files and run read-only commands with your tools. Do not modify files.' : mode !== 'write' ? ' Do not modify files.' : ''}]\n\n`;
       const toolNote = mode === 'none' ? '(No tools or commands this turn: answer from the conversation.)\n\n' : '';
       const recap = !thread && recoveryText ? `${recoveryText.trim()}\n\n` : '';
       const stdin = header + (thread ? '' : tgt.preface) + recap + toolNote + prompt;

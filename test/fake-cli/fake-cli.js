@@ -10,7 +10,14 @@
 //   rule selectors: agent ('claude'|'codex'), seat (seat name from the role header), match (regex on the
 //                   prompt, dotall), nth (1-based call number for that seat), resume (true: only resumed turns,
 //                   false: only new threads)
-//   rule actions:   reply (text), usage ({input, cacheCreation, cacheRead, output, cost} | {input, cached, output}),
+//   rule actions:   replay (path relative to test/fixtures, e.g. "real/claude-tool.jsonl": prints that real recording
+//                   instead of synthetic lines, with the recorded thread id swapped for this call's thread id; true
+//                   picks the recording for the agent: claude/codex *-plain (new thread) or *-resume, agy *-tool or
+//                   *-resume; ignored for cursor, which has no recording). The default rule replays, so the happy
+//                   path of every test runs real output. Synthetic lines are kept for rules that need exact content:
+//                   anything with reply, usage, tool, error, crash, init, toolUses, commands and the like, because the
+//                   recordings cannot carry a chosen text, token count or edge case (errors, broken JSON, hangs).
+//                   reply (text), usage ({input, cacheCreation, cacheRead, output, cost} | {input, cached, output}),
 //                   rateLimit (claude rate_limit_info object), thinking (bool), tool (bool), reasoning (text),
 //                   events (extra raw events emitted before the result), error (message -> failed turn),
 //                   warn (stderr text) and noise (a non-JSON stdout line) before a successful turn,
@@ -92,7 +99,7 @@ function parseArgs(args) {
 const readStdin = () => new Promise((resolve) => { let s = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', (d) => { s += d; }); process.stdin.on('end', () => resolve(s)); process.stdin.on('error', () => resolve(s)); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const write = (stream, s) => new Promise((r) => stream.write(s, () => r()));
-const jsonl = (events) => events.map((e) => JSON.stringify(e) + '\n').join('');
+const jsonl = (events) => events.map((e) => (typeof e === 'string' ? e : JSON.stringify(e)) + '\n').join('');
 const readJson = (f, fallback) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; } };
 
 function readCalls() {
@@ -111,7 +118,35 @@ function pickRule(scenario, ctx) {
     if (r.match && !new RegExp(r.match, 's').test(ctx.prompt)) continue;
     return { rule: r, index: i };
   }
-  return { rule: scenario.default || { reply: 'ok' }, index: 'default' };
+  return { rule: scenario.default || { replay: true }, index: 'default' };
+}
+
+// Real recording to print for a rule, or null for synthetic lines. A rule that asks for exact content (reply, usage,
+// tool, ...) or an edge case stays synthetic unless it names a replay file itself.
+const SYNTHETIC_KEYS = ['reply', 'usage', 'rateLimit', 'thinking', 'tool', 'reasoning', 'events', 'error', 'crash', 'init', 'beforeInit', 'toolUses', 'denials', 'commands', 'fileChanges'];
+function replayFile(rule, agent, resumed) {
+  if (!rule.replay) return null;
+  if (typeof rule.replay === 'string') return rule.replay;
+  if (SYNTHETIC_KEYS.some((k) => rule[k] !== undefined)) return null;
+  if (agent === 'cursor') return null;
+  if (agent === 'agy') return resumed ? 'real/agy-resume.jsonl' : 'real/agy-tool.jsonl';
+  return `real/${agent}-${resumed ? 'resume' : 'plain'}.jsonl`;
+}
+
+// Splits a real recording into head (the first line: init / thread.started), body, and tail (from the result /
+// turn.completed line on), so gate, delayMs, hang, warn and noise keep working. The recorded id becomes `thread`.
+function replayEvents(file, agent, thread) {
+  const text = fs.readFileSync(path.join(__dirname, '..', 'fixtures', file), 'utf8');
+  const lines = text.split(String.fromCharCode(10)).map((l) => l.trim()).filter(Boolean);
+  const parsed = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } });
+  const first = parsed[0] || {};
+  const recorded = first.session_id || first.thread_id || first.conversation_id;
+  let tailAt = -1;
+  parsed.forEach((e, i) => { if (e && (e.type === 'result' || e.type === 'turn.completed' || e.event === 'result' || (e.total_cost_usd !== undefined && e.usage))) tailAt = i; });
+  if (tailAt < 0) tailAt = lines.length;
+  const fix = (l) => (recorded && thread ? l.split(recorded).join(thread) : l);
+  const out = lines.map(fix);
+  return { head: out.slice(0, 1), body: out.slice(1, tailAt), tail: out.slice(tailAt) };
 }
 
 const chunks = (text) => { const out = []; for (let i = 0; i < text.length; i += 9) out.push(text.slice(i, i + 9)); return out.length ? out : ['']; };
@@ -318,7 +353,21 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  const ev = a.agent === 'cursor' ? cursorEvents(rule, a, thread, reply) : a.agent === 'agy' ? agyEvents(rule, a, thread, reply) : a.agent === 'codex' ? codexEvents(rule, a, thread, reply) : claudeEvents(rule, a, thread || 'probe-' + process.pid, reply);
+  const replay = replayFile(rule, a.agent, !!a.resume);
+  const ev = replay ? replayEvents(replay, a.agent, a.agent === 'claude' ? thread || 'probe-' + process.pid : thread) : a.agent === 'cursor' ? cursorEvents(rule, a, thread, reply) : a.agent === 'agy' ? agyEvents(rule, a, thread, reply) : a.agent === 'codex' ? codexEvents(rule, a, thread, reply) : claudeEvents(rule, a, thread || 'probe-' + process.pid, reply);
+  // A replayed claude init line describes the recording's cwd, permission mode and tools: rewrite them from this call.
+  if (replay && a.agent === 'claude' && ev.head.length) {
+    try {
+      const init = JSON.parse(ev.head[0]);
+      if (init.type === 'system' && init.subtype === 'init') {
+        init.cwd = process.cwd();
+        init.permissionMode = a.permissionMode || 'default';
+        init.tools = (a.tools || []).filter(Boolean);
+        if (a.model) init.model = a.model;
+        ev.head[0] = JSON.stringify(init);
+      }
+    } catch {}
+  }
   await write(process.stdout, jsonl(ev.head));
   if (rule.hang) {
     // Looks busy forever (so the board shows "thinking") until the runner kills the process tree.

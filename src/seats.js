@@ -30,14 +30,15 @@ function createSeats({ store, broadcast }) {
   function setRt(id, patch) { Object.assign(rtOf(id), patch); const s = seatById(id); if (s) broadcast({ t: 'seat', seat: publicSeat(s) }); }
 
   function upsertSeat(b) {
-    const agent = MODELS[b.agent] ? b.agent : 'codex';
     // Listed models are suggestions; any CLI-accepted model name (aliases included) is allowed.
     let s = b.id && seatById(b.id);
+    // An update that leaves a field out keeps the seat's value: a Claude seat edited without `agent` stays Claude.
+    const agent = MODELS[b.agent] ? b.agent : s && MODELS[s.agent] ? s.agent : 'codex';
     // The first character is a letter or digit, so a model name can never be read as a CLI flag ('--add-dir', '-x').
     const validModel = MODEL_RE.test(b.model || '');
     if (b.model && !validModel) throw new Error('invalid model name');
     const model = validModel ? b.model : s && s.agent === agent ? s.model : MODELS[agent][0];
-    const effort = EFFORTS[agent].includes(b.effort) ? b.effort : 'medium';
+    const effort = EFFORTS[agent].includes(b.effort) ? b.effort : s && s.agent === agent && EFFORTS[agent].includes(s.effort) ? s.effort : 'medium';
     if (!s) {
       const base = String(b.name || agent).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'seat';
       let id = base, n = 2; while (seatById(id)) id = `${base}-${n++}`;
@@ -45,12 +46,12 @@ function createSeats({ store, broadcast }) {
       seats.push(s);
     }
     // A thread belongs to one CLI, and its first message fixed the role, permission and scope: reset on change.
-    const perm = b.perm === 'write' ? 'write' : 'read', target = String(b.target ?? s.target ?? '').trim();
+    const perm = b.perm === undefined ? (s.perm === 'write' ? 'write' : 'read') : b.perm === 'write' ? 'write' : 'read', target = String(b.target ?? s.target ?? '').trim();
     if ((s.agent && s.agent !== agent) || (s.perm && s.perm !== perm) || (s.target ?? '') !== target
       || (b.role !== undefined && s.role !== undefined && b.role !== s.role) || (b.name !== undefined && s.name !== undefined && b.name !== s.name)) dropThread(s);
     Object.assign(s, {
       name: String(b.name ?? s.name ?? agent).slice(0, 24), role: String(b.role ?? s.role ?? '').slice(0, 40),
-      agent, model, effort, perm: b.perm === 'write' ? 'write' : 'read',
+      agent, model, effort, perm,
       target: String(b.target ?? s.target ?? '').trim(), budget: Math.max(0, Number(b.budget ?? s.budget ?? 0) || 0),
       color: /^#[0-9a-f]{6}$/i.test(b.color || '') ? b.color : s.color,
     });

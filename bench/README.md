@@ -9,6 +9,7 @@ The README quotes **1.69M -> 0.46M total tokens (-73%)** for the same 4-agent pl
 | File | What |
 | --- | --- |
 | `token-bench.mjs` | zero-dependency Node (>= 20) script that runs the same Debate on a lean board and a naive board, waits over SSE, and prints a Markdown report with total / uncached / cached tokens, CLI-reported cost, wall time, rounds, early stop, per-agent and per-phase usage, usage-limit meters, and mean with min-max spread for `--repeat` runs. It only talks to the board's HTTP API, never spawns a CLI itself |
+| `record-demo.mjs` | records `demo-rooms/*.json` from a real run: a temporary taskly project, real seats (Claude `claude-haiku-5-5` builds, Codex `gpt-6-luna` low reviews), a one round Council, a Workflow plan of at most 2 items and a propose mode build. Local paths become `C:\work\taskly`, the user name is removed, and each room gets `recordedAt`, which the demo banner shows. Spends real quota, so it refuses to run without `OB_REAL=1` |
 | `../docs/measurements/2026-10-07/` | the two sanitized room JSONs, `summarize.mjs`, and `README.md` with the metric definition and per-phase / per-seat tables |
 
 ## Terms
