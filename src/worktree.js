@@ -403,7 +403,18 @@ function assertNoLinks(dir, { project = null, doing = 'to run git' } = {}) {
 
 // POSIX-style path of dir relative to project.
 function relOf(project, dir) {
-  return path.relative(project, dir).split(path.sep).join('/');
+  // Both sides real (nearest existing parent for a vanished dir), so a short temp name never shows up as ../..
+  const real = (p) => {
+    let cur = path.resolve(String(p)), rest = '';
+    for (;;) {
+      try { const r = fs.realpathSync.native(cur); return rest ? path.join(r, rest) : r; } catch {}
+      const up = path.dirname(cur);
+      if (up === cur) return path.resolve(String(p));
+      rest = rest ? path.join(path.basename(cur), rest) : path.basename(cur);
+      cur = up;
+    }
+  };
+  return path.relative(real(project), real(dir)).split(path.sep).join('/');
 }
 
 function listBoardWorktrees(project) {

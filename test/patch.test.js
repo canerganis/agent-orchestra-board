@@ -143,7 +143,7 @@ test('(d) a symlink is listed in unsafe', { skip: SKIP }, (t) => {
     if (!/^120000 /.test(gitIn(w.dir, ['ls-files', '-s', 'link']))) return t.skip('git does not record symlinks on this machine');
     const args = { store: f.store, worktreeDir: w.dir, startTree: w.startTree, roomId: 'r1', itemId: 'a', round: 1 };
     // A real link on disk is refused before the patch is listed; an index-only 120000 entry reaches the unsafe list.
-    if (real) return assert.throws(() => patch.freezeProposal(args), /refusing to stage the worktree: .*link contains a symbolic link or junction/);
+    if (real) return assert.throws(() => patch.freezeProposal(args), /refusing to stage the worktree: .* contains a symbolic link or junction: link/);
     const fz = patch.freezeProposal(args);
     assert.ok(fz.unsafe.includes('link'), `unsafe: ${JSON.stringify(fz.unsafe)}`);
   } finally { f.cleanup(); }

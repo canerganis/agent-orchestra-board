@@ -140,7 +140,7 @@ function createClaudeRuns({
   for (const v of variants) {
     const h = homeCanon;
     for (let d = path.dirname(v); d !== path.dirname(d); d = path.dirname(d)) {
-      if (h && strictlyUnder(fold(d), h)) ancestorNames.add(J.encodeProjectDir(d).toLowerCase());
+      if (h && strictlyUnder(canon(d) || fold(d), h)) ancestorNames.add(J.encodeProjectDir(d).toLowerCase());
     }
   }
   const nameMatch = (name) => {

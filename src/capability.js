@@ -273,7 +273,18 @@ function worktreeFingerprint(project, dir) {
   const gitDir = worktree.canon(worktree.worktreeGitDir(dir, project));
   return `${gitDir}\n${worktree.fingerprint(dir, { wt: { dir, project, gitDir } })}`;
 }
-const relPosix = (from, to) => path.relative(from, to).split(path.sep).join('/');
+// Real path when it exists, else the real path of the nearest existing parent plus the rest (case kept).
+function realish(p) {
+  let cur = path.resolve(String(p)), rest = '';
+  for (;;) {
+    try { return rest ? path.join(fs.realpathSync.native(cur), rest) : fs.realpathSync.native(cur); } catch {}
+    const up = path.dirname(cur);
+    if (up === cur) return path.resolve(String(p));
+    rest = rest ? path.join(path.basename(cur), rest) : path.basename(cur);
+    cur = up;
+  }
+}
+const relPosix = (from, to) => path.relative(realish(from), realish(to)).split(path.sep).join('/');
 
 // platform and recordsDir are injectable for tests only; nothing (env var, setting, flag) wires them to user input.
 function createCapability({ store, runner, seats, broadcast = () => {}, platform = process.platform, recordsDir = defaultRecordsDir(), scratchRoot = null }) {
