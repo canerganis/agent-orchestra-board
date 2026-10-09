@@ -35,6 +35,13 @@ cd agent-orchestra-board
 node bin/agent-orchestra-board.js demo --open
 ```
 
+<details>
+<summary>Watch the recorded run first (25 second GIF: Council, approved plan, build)</summary>
+
+<img src="docs/demo.gif" alt="The demo board: a Council where Claude and Codex Luna agree on a --json flag and write a synthesis, the plan the manager wrote from it, approved, and the build where one item passed with a patch git accepts and the other was stopped because the model's patch was corrupt." width="100%">
+
+</details>
+
 To use it on your own project:
 
 Prerequisites: Node 20 or newer, and the [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and/or the [Codex CLI](https://github.com/openai/codex), logged in. One of the two is enough if all your seats use it. Builds also need `git` 2.25 or newer.
