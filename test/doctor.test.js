@@ -1,5 +1,5 @@
 // Doctor checks: binary resolution mirrors libuv (PATH only, .com/.exe; .cmd/.bat are shims), spawn failures
-// never reject, the state-directory probe never creates directories, token logins are recognised.
+// never reject, the state-directory probe never creates directories, login state comes only from the CLI status commands.
 // No real CLI is ever started: the only processes are fake .cmd files (through cmd.exe) and injected spawn stubs.
 const { test, after } = require('node:test');
 // Fake children own no OS handles and the CLI timers are unref()d, so on Node 20/22 the event loop can drain
@@ -226,15 +226,119 @@ test('run: a missing project directory fails the project check, skips the state 
   }
 });
 
-test('claudeLoginCheck: token logins count, values are never shown', () => {
-  const base = { CLAUDE_CONFIG_DIR: path.join(os.tmpdir(), 'ob-doc-no-such-config-dir') };
-  for (const v of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_AUTH_TOKEN']) {
-    const c = doctor.claudeLoginCheck({ ...base, [v]: 'sk-secret-value-123' });
-    assert.equal(c.status, 'ok', v);
-    assert.ok(c.detail.includes(v));
-    assert.ok(!c.detail.includes('secret'));
+// A fake CLI: answer(args) -> { out, code } for a child that prints and exits, or null for one that never exits.
+function fakeCli(answer, spawned = []) {
+  return (cmd, args) => {
+    spawned.push({ cmd, args });
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.pid = 0;
+    const a = answer(args);
+    if (a) setImmediate(() => { if (a.out) child.stdout.emit('data', a.out); child.emit('close', a.code, null); });
+    return child;
+  };
+}
+
+// Every read of a file under ~/.claude, ~/.codex or ~/.claude.json throws and is recorded, so a read that the code
+// swallows still fails the test through the recorded list.
+function guardCredentialReads() {
+  const home = os.homedir();
+  const guarded = [path.join(home, '.claude'), path.join(home, '.codex'), path.join(home, '.claude.json')].map((p) => p.toLowerCase());
+  const hit = (f) => { const p = path.resolve(String(f)).toLowerCase(); return guarded.some((g) => p === g || p.startsWith(g + path.sep)); };
+  const reads = [];
+  const orig = { readFileSync: fs.readFileSync, readFile: fs.readFile, promisesReadFile: fs.promises.readFile, openSync: fs.openSync };
+  const deny = (f) => { reads.push(String(f)); throw Object.assign(new Error(`test: credential read of ${f}`), { code: 'EACCES' }); };
+  fs.readFileSync = function (f, ...rest) { if (typeof f !== 'number' && hit(f)) deny(f); return orig.readFileSync.call(fs, f, ...rest); };
+  fs.openSync = function (f, ...rest) { if (typeof f !== 'number' && hit(f)) deny(f); return orig.openSync.call(fs, f, ...rest); };
+  fs.readFile = function (f, ...rest) { if (typeof f !== 'number' && hit(f)) deny(f); return orig.readFile.call(fs, f, ...rest); };
+  fs.promises.readFile = function (f, ...rest) { if (typeof f !== 'number' && hit(f)) deny(f); return orig.promisesReadFile.call(fs.promises, f, ...rest); };
+  const restore = () => { fs.readFileSync = orig.readFileSync; fs.readFile = orig.readFile; fs.promises.readFile = orig.promisesReadFile; fs.openSync = orig.openSync; };
+  return { reads, restore };
+}
+
+test('loginChecks: the CLI status command decides; missing subcommand or timeout is unknown; no credential file is read', async () => {
+  const dir = tmp('ob-doc-');
+  const guard = guardCredentialReads();
+  try {
+    const exe = touch(path.join(dir, WIN ? 'obfake.exe' : 'obfake'));
+    const env = envWithPath(dir);
+    const cases = [
+      ['claude', doctor.claudeLoginCheck, ['auth', 'status']],
+      ['codex', doctor.codexLoginCheck, ['login', 'status']],
+    ];
+    for (const [agent, fn, args] of cases) {
+      // Logged in: exit 0. The output (which may name the account) is never shown.
+      let spawned = [];
+      const ok = await fn('obfake', env, 2000, { spawnFn: fakeCli(() => ({ out: 'Logged in as someone@example.com\n', code: 0 }), spawned) });
+      assert.equal(ok.status, 'ok', agent);
+      assert.deepEqual(spawned, [{ cmd: exe, args }]);
+      assert.ok(!ok.detail.includes('example.com'));
+      // Not logged in: non-zero exit with no unknown-command text.
+      const no = await fn('obfake', env, 2000, { spawnFn: fakeCli(() => ({ out: 'Not logged in\n', code: 1 })) });
+      assert.equal(no.status, 'warn');
+      assert.match(no.detail, /^not logged in/);
+      assert.match(no.hint, agent === 'claude' ? /claude login/ : /codex login/);
+      // An older CLI without the subcommand: unknown, never a guess.
+      for (const out of ["error: unknown command 'auth'\n", "error: unrecognized subcommand 'login'\n"]) {
+        const u = await fn('obfake', env, 2000, { spawnFn: fakeCli(() => ({ out, code: 2 })) });
+        assert.equal(u.status, 'warn');
+        assert.match(u.detail, /^login state unknown: this CLI has no/);
+      }
+      // A status command that never answers: unknown after the short timeout.
+      const t = await fn('obfake', env, 150, { spawnFn: fakeCli(() => null) });
+      assert.equal(t.status, 'warn');
+      assert.match(t.detail, /^login state unknown: .* timed out after 0\.15s/);
+      // A spawn failure: unknown.
+      const e = await fn('obfake', env, 2000, { spawnFn: throwingSpawn });
+      assert.match(e.detail, /^login state unknown: .*EINVAL/);
+      // Not on PATH: nothing spawned, skipped.
+      spawned = [];
+      const m = await fn('ob-no-such-cli-xyz', env, 2000, { spawnFn: fakeCli(() => ({ code: 0 }), spawned) });
+      assert.equal(m.status, 'skip');
+      assert.deepEqual(spawned, []);
+    }
+    assert.deepEqual(guard.reads, [], 'no file under ~/.claude or ~/.codex was read');
+  } finally { guard.restore(); rm(dir); }
+});
+
+test('run: plain doctor spawns only `--version` and login status calls, reads no credential file, and warns about an ORCHESTRA_*_BIN override', async () => {
+  const dir = tmp('ob-doc-');
+  const keys = ['ORCHESTRA_CLAUDE_BIN', 'ORCHESTRA_CODEX_BIN', 'CODEX_HOME'];
+  const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+  // The Windows sandbox check reads config.toml from CODEX_HOME (a setting, not a credential): point it away from ~/.codex.
+  process.env.CODEX_HOME = path.join(dir, 'codex-home');
+  const guard = guardCredentialReads();
+  try {
+    process.env.ORCHESTRA_CLAUDE_BIN = touch(path.join(dir, WIN ? 'obclaude.exe' : 'obclaude'));
+    process.env.ORCHESTRA_CODEX_BIN = touch(path.join(dir, WIN ? 'obcodex.exe' : 'obcodex'));
+    const spawned = [];
+    const spawnFn = fakeCli((args) => ({ out: args[0] === '--version' ? '1.0.0\n' : 'ok\n', code: 0 }), spawned);
+    const r = await doctor.run({ projectDir: dir, timeoutMs: 2000, spawnFn });
+    const calls = spawned.map((s) => `${path.basename(s.cmd)} ${s.args.join(' ')}`).sort();
+    const ext = WIN ? '.exe' : '';
+    assert.deepEqual(calls, [`obclaude${ext} --version`, `obclaude${ext} auth status`, `obcodex${ext} --version`, `obcodex${ext} login status`].sort());
+    const by = Object.fromEntries(r.checks.map((c) => [c.id, c]));
+    assert.equal(by.claudeLogin.status, 'ok');
+    assert.equal(by.codexLogin.status, 'ok');
+    assert.deepEqual(guard.reads, [], 'no file under ~/.claude or ~/.codex was read');
+    const o = by.binOverride;
+    assert.equal(o.status, 'warn');
+    assert.ok(o.detail.includes(`ORCHESTRA_CLAUDE_BIN=${process.env.ORCHESTRA_CLAUDE_BIN}`) && o.detail.includes('ORCHESTRA_CODEX_BIN='));
+    assert.match(o.detail, /instead of the CLI found on PATH/);
+  } finally {
+    guard.restore();
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    rm(dir);
   }
-  const none = doctor.claudeLoginCheck(base);
-  assert.notEqual(none.status, 'ok');
-  if (none.status === 'warn') assert.match(none.hint, /CLAUDE_CODE_OAUTH_TOKEN/);
+});
+
+test('binOverrideCheck: nothing when no override is set, one variable named when one is', () => {
+  assert.equal(doctor.binOverrideCheck({}), null);
+  assert.equal(doctor.binOverrideCheck({ ORCHESTRA_CLAUDE_BIN: '' }), null);
+  const c = doctor.binOverrideCheck({ ORCHESTRA_CODEX_BIN: '/opt/codex' });
+  assert.equal(c.status, 'warn'); assert.match(c.detail, /^ORCHESTRA_CODEX_BIN=\/opt\/codex: the board runs this file/);
+});
+
+test('codexSandboxCheck (Windows): every result says Codex file edits are off on Windows', { skip: !WIN }, () => {
+  const c = doctor.codexSandboxCheck();
+  assert.match(c.detail, /; Codex file edits are off on Windows \(the unelevated sandbox does not confine writes\)$/);
 });

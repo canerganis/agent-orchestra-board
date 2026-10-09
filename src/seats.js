@@ -1,6 +1,8 @@
 // Seats: persistent agent definitions (seats.json) plus per-seat runtime state (status, activity, child, queue).
 const { MODELS, EFFORTS, COLORS, PERSISTED, defaultSeats } = require('./config');
 
+const MODEL_RE = /^[A-Za-z0-9][\w.:\-\[\]]{0,63}$/;
+
 function createSeats({ store, broadcast }) {
   // A missing seats.json means first run (defaults). An unreadable one is NOT silently replaced: it is copied aside
   // (seats.json.corrupt-<time>) first, so threads, budgets and usage can be recovered by hand.
@@ -31,7 +33,8 @@ function createSeats({ store, broadcast }) {
     const agent = MODELS[b.agent] ? b.agent : 'codex';
     // Listed models are suggestions; any CLI-accepted model name (aliases included) is allowed.
     let s = b.id && seatById(b.id);
-    const validModel = /^[\w.:\-\[\]]{1,64}$/.test(b.model || '');
+    // The first character is a letter or digit, so a model name can never be read as a CLI flag ('--add-dir', '-x').
+    const validModel = MODEL_RE.test(b.model || '');
     if (b.model && !validModel) throw new Error('invalid model name');
     const model = validModel ? b.model : s && s.agent === agent ? s.model : MODELS[agent][0];
     const effort = EFFORTS[agent].includes(b.effort) ? b.effort : 'medium';
@@ -71,4 +74,4 @@ function createSeats({ store, broadcast }) {
   return { all: () => seats, rtOf, seatById, saveSeats, publicSeat, setRt, upsertSeat, resetThread, removeSeat, dropThread };
 }
 
-module.exports = { createSeats };
+module.exports = { createSeats, MODEL_RE };

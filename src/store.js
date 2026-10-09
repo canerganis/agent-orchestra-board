@@ -41,16 +41,23 @@ function createStore(projectDir) {
   }
 
   // Creates .orchestra/ and, once, a .gitignore inside it that keeps the session token out of version control
-  // (users are free to commit the rest of the directory). An existing .gitignore is left alone.
-  const GITIGNORE = '# Written by Agent Orchestra Board. The session token must never be committed; the rest is your call.\nsession\nempty/\n';
+  // (users are free to commit the rest of the directory). An existing .gitignore keeps its lines and only gains the
+  // required ones. capability.json is ignored too: the board no longer reads one there (write checks are stored per
+  // user), and a stale or forged copy must not travel with the repository.
+  const GITIGNORE = '# Written by Agent Orchestra Board. The session token must never be committed; the rest is your call.\nsession\nempty/\nworktrees/\ncapability.json\n';
   function ensure() {
     fs.mkdirSync(orch, { recursive: true });
     const gi = path.join(orch, '.gitignore');
     try { fs.writeFileSync(gi, GITIGNORE, { flag: 'wx' }); return; } catch {} // created now (or read-only: nothing to do)
-    // An existing .gitignore (the user's own) keeps its lines, but the session token must still be ignored.
+    // An existing .gitignore (the user's own) keeps its lines, but the session token (and the rest) must still be ignored.
     try {
       const cur = fs.readFileSync(gi, 'utf8');
-      if (!cur.split(/\r?\n/).some((l) => /^\/?session\s*$/.test(l.trim()))) fs.appendFileSync(gi, `${cur.endsWith('\n') || !cur ? '' : '\n'}session\n`);
+      const lines = cur.split(/\r?\n/).map((l) => l.trim());
+      const missing = [];
+      if (!lines.some((l) => /^\/?session\s*$/.test(l))) missing.push('session');
+      if (!lines.some((l) => /^\/?worktrees\/?\s*$/.test(l))) missing.push('worktrees/');
+      if (!lines.some((l) => /^\/?capability\.json\s*$/.test(l))) missing.push('capability.json');
+      if (missing.length) fs.appendFileSync(gi, `${cur.endsWith('\n') || !cur ? '' : '\n'}${missing.join('\n')}\n`);
     } catch {}
   }
 

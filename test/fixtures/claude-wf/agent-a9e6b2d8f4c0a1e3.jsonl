@@ -1,0 +1,1 @@
+{"type":"assistant","timestamp":"2026-10-08T10:02:55.000Z","isSidechain":true,"agentId":"a9e6b2d8f4c0a1e3","message":{"id":"msg_0001a9e6","type":"message","role":"assistant","content":[{"type":"text","text":"CANARY_TEXT_2e3f"}],"stop_reason":"end_turn","usage":{"input_tokens":150,"cache_creation_input_tokens":0,"cache_read_input_tokens":2000,"output_tokens":100}}}

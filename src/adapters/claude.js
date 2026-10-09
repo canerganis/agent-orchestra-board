@@ -26,8 +26,33 @@ function buildProbeArgs(model = CLAUDE_PROBE_MODEL) {
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
+// The path a tool call names: file_path, else path, else notebook_path (null when none is a non-empty string).
+const pathOfInput = (input) => {
+  if (!isObj(input)) return null;
+  for (const k of ['file_path', 'path', 'notebook_path']) if (typeof input[k] === 'string' && input[k]) return input[k];
+  return null;
+};
+// A name list from the init event: strings as they are, objects by their name; anything else is kept as its string
+// form so a check against an allow list rejects it. null when the field is missing or not an array.
+const namesOf = (v) => (Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x : isObj(x) && typeof x.name === 'string' ? x.name : String(x))) : null);
+// One entry of the result's permission_denials, parsed tolerantly: {name, id, path} (null for what is missing).
+const denialOf = (d) => {
+  if (typeof d === 'string') return { name: d, id: null, path: null };
+  if (!isObj(d)) return { name: null, id: null, path: null };
+  const name = typeof d.tool_name === 'string' ? d.tool_name : typeof d.name === 'string' ? d.name : null;
+  const id = typeof d.tool_use_id === 'string' ? d.tool_use_id : typeof d.id === 'string' ? d.id : null;
+  return { name, id, path: pathOfInput(d.tool_input) ?? pathOfInput(d.input) ?? pathOfInput(d) };
+};
+
 // handlers: thread(id), activity(text), delta(text), item(kind, text), usage({tokens,cached,cost}),
 //           partialUsage({tokens,cached}), rateLimit(info), completed({result}), error(message). All optional.
+// Containment and tool log (the runner checks write turns with these):
+//   init({tools, cwd, permissionMode, mcpServers}): the system/init event, sent before thread(); a field the event
+//     lacks (or has with the wrong type) is null. mcpServers are the names in mcp_servers.
+//   preInit(type): an assistant, stream, user (tool result) or result event arrived before any init event.
+//   toolUse({id, name, path}): a tool_use block (path = input.file_path ?? input.path ?? input.notebook_path), once
+//     per id. toolResult({id, error}): a tool_result block (error = is_error === true), once per id.
+//   denials([{name, id, path}]): the result's permission_denials (sent only when there are some).
 // event(ev) returns false for an event type this adapter does not know (the feeder counts those).
 // `usage` is the one authoritative per-turn report (from `result`; zeros when the result carries no usage).
 // `partialUsage` carries the running totals from message_start/message_delta (no cost) so a consumer can still
@@ -35,6 +60,8 @@ const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 function createParser(handlers = {}) {
   const on = (k, ...a) => { if (typeof handlers[k] === 'function') handlers[k](...a); };
   let emitted = false; // some text was streamed already (separates consecutive messages)
+  let sawInit = false;
+  const seenUse = new Set(), seenResult = new Set();
   const delta = (s) => { if (s) emitted = true; on('delta', s); };
   // Per-turn token accounting from the stream: `done` = finished messages, `cur` = the message in flight.
   const done = { inp: 0, cached: 0, out: 0 };
@@ -75,6 +102,7 @@ function createParser(handlers = {}) {
   }
 
   function result(ev) {
+    if (Array.isArray(ev.permission_denials) && ev.permission_denials.length) on('denials', ev.permission_denials.map(denialOf));
     const final = typeof ev.result === 'string' ? ev.result : null;
     const u = isObj(ev.usage) ? ev.usage : {};
     const cached = num(u.cache_read_input_tokens);
@@ -90,19 +118,43 @@ function createParser(handlers = {}) {
 
   function event(ev) {
     if (!isObj(ev)) return false;
+    const resultLike = ev.type === 'result' || (ev.type === undefined && 'total_cost_usd' in ev);
+    if (!sawInit && (resultLike || ev.type === 'assistant' || ev.type === 'stream_event' || ev.type === 'user')) on('preInit', resultLike ? 'result' : ev.type);
     switch (ev.type) {
       case 'rate_limit_event': if (isObj(ev.rate_limit_info)) on('rateLimit', ev.rate_limit_info); return true;
       case 'system':
-        if (ev.subtype === 'init') { if (typeof ev.session_id === 'string' && ev.session_id) on('thread', ev.session_id); }
+        if (ev.subtype === 'init') {
+          sawInit = true;
+          on('init', {
+            tools: namesOf(ev.tools),
+            cwd: typeof ev.cwd === 'string' && ev.cwd ? ev.cwd : null,
+            permissionMode: typeof ev.permissionMode === 'string' && ev.permissionMode ? ev.permissionMode : null,
+            mcpServers: namesOf(ev.mcp_servers),
+          });
+          if (typeof ev.session_id === 'string' && ev.session_id) on('thread', ev.session_id);
+        }
         else if (ev.subtype === 'thinking_tokens') on('activity', `thinking · ~${num(ev.estimated_tokens)} tok`);
         return true; // other system subtypes (compact_boundary, hooks, ...) carry nothing we show
       case 'stream_event': streamEvent(isObj(ev.event) ? ev.event : {}); return true;
       case 'assistant':
         for (const c of Array.isArray(ev.message?.content) ? ev.message.content : []) {
-          if (c?.type === 'tool_use') { on('activity', `tool: ${c.name}`); on('item', 'tool', `${c.name} ${clip(c.input)}`); }
+          if (c?.type !== 'tool_use') continue;
+          on('activity', `tool: ${c.name}`); on('item', 'tool', `${c.name} ${clip(c.input)}`);
+          const id = typeof c.id === 'string' && c.id ? c.id : null;
+          if (id && seenUse.has(id)) continue; // with partial messages a block can arrive more than once
+          if (id) seenUse.add(id);
+          on('toolUse', { id, name: typeof c.name === 'string' ? c.name : null, path: pathOfInput(c.input) });
         }
         return true;
-      case 'user': return true; // tool results echoed back
+      case 'user': // tool results echoed back
+        for (const c of Array.isArray(ev.message?.content) ? ev.message.content : []) {
+          if (c?.type !== 'tool_result') continue;
+          const id = typeof c.tool_use_id === 'string' && c.tool_use_id ? c.tool_use_id : null;
+          if (id && seenResult.has(id)) continue;
+          if (id) seenResult.add(id);
+          on('toolResult', { id, error: c.is_error === true });
+        }
+        return true;
       case 'result': result(ev); return true;
       default:
         if ('total_cost_usd' in ev) { result(ev); return true; } // older CLIs: result object without type

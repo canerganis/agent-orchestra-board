@@ -7,7 +7,7 @@ Thanks for helping. This is a small, opinionated tool; the easiest contributions
 These are deliberate and pull requests that reverse them will not be merged:
 
 - **Zero runtime dependencies.** Node 20+ standard library only. Dev tooling that does not ship is fine but not required.
-- **Read-only by default.** A seat edits files only when the user sets `perm: write`.
+- **Read-only by default.** A seat edits files only when the user sets `perm: write`, only in a board build's worktree, and only through the write gate. Codex never edits files in v0.2; nothing may add a switch that turns that on or gives a Claude write turn a shell.
 - **English UI; agents reply in a configurable language.**
 - **Only state-showing animations.** Motion must mean something (working, error, streaming), and must respect `prefers-reduced-motion`.
 - **The security gate stays.** `127.0.0.1` bind, `Host`/`Origin` allowlist, JSON-only `POST`, static files only from `public/`.
@@ -48,7 +48,7 @@ Tests use `node:test`, which picks up every `*.test.js` in the tree: `test/*.tes
 
 - **Adapters** (`src/adapters/*.js`): `buildArgs(opts) -> string[]` and `createParser(handlers) -> {feed, event}` with the handlers `thread`, `activity`, `delta`, `item`, `usage`, `partialUsage` (Claude only: running stream totals, used when a killed run never reports `usage`), `rateLimit`, `completed`, `error`. `usage.tokens` is net (uncached input + output); `cached` is cached input.
 - **Runner** (`src/runner.js`): `runSeat(seatId, prompt, opts) -> Promise<{ok, text, tokens, cached, cost, error}>`; `tools: 'write'` is downgraded to `read` unless `seat.perm === 'write'`.
-- **HTTP and SSE**: see [docs/api.md](docs/api.md). New routes go into `handle()` in `src/server.js`, GET routes before the static fallthrough, POST routes after body parsing. Errors are `{error: string}`.
+- **HTTP and SSE**: see [docs/api.md](docs/api.md). New routes go into a module under `src/api/` that exports `(ctx) => [{method, re, run}]` and is listed in `src/api/index.js`; the security gate in `src/server.js` covers them. Throw `httpError(status, message, code)` for failures: the client gets `{error, code}`.
 - **Persistence**: everything under `<project>/.orchestra/`; never write elsewhere in the user's project unless the seat has `perm: write` and the user asked.
 - **Child processes**: only `src/platform.js` may require `child_process`. Everything else spawns through `spawnResolved` / `execFileResolved`, which resolve the program on `PATH` first so the project directory can never supply the executable (`test/spawn.test.js` fails the build otherwise).
 

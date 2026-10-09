@@ -4,12 +4,25 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { tmpDir, rmrf, waitFor, testWithFake, treeDead, samePath } = require('./helpers');
+const { tmpDir, rmrf, waitFor, testWithFake, treeDead, samePath, hasGit, initRepo } = require('./helpers');
 const { setupFakeCli } = require('./fake-cli');
 const { createStore } = require('../src/store');
 const { createSeats } = require('../src/seats');
 const { createLimits } = require('../src/limits');
 const { createRunner } = require('../src/runner');
+const worktree = require('../src/worktree');
+const { CLAUDE_TOOLS } = require('../src/config');
+const { CLAUDE_WRITE_TOOLS } = require('../src/capability');
+const claudeAdapter = require('../src/adapters/claude');
+
+// A throwaway repository with one registered board worktree (<repo>/.orchestra/worktrees/r1/<item>): the runner's
+// pre-spawn assertion only lets a write turn run in a real board worktree.
+function boardWorktree(root, item = 'i1') {
+  const repo = path.join(root, 'repo');
+  if (!fs.existsSync(repo)) initRepo(repo, { 'README.md': 'hello\n', '.orchestra/.gitignore': 'worktrees/\n' });
+  const head = require('child_process').spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8', windowsHide: true }).stdout.trim();
+  return worktree.createWorktree(repo, 'r1', item, head).dir;
+}
 
 const SEATS = [
   { id: 'ada', name: 'Ada', role: 'Builder', agent: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', perm: 'read', target: '', budget: 0, color: '#e07a52', thread: null, used: 0, cached: 0, cost: 0 },
@@ -144,21 +157,95 @@ testWithFake(fake, 'token budget blocks the turn before any spawn', async () => 
   assert.equal(fake.calls().length, before);
 });
 
-testWithFake(fake, 'tools: write is downgraded to read for read seats; write seats get acceptEdits / workspace-write', async () => {
+testWithFake(fake, 'tools: write without a worktree runs as read for every seat (the write gate is closed by default)', async () => {
   fake.scenario({ default: { reply: 'ok' } });
-  await runner.runSeat('ada', 'edit please', { tools: 'write' });
+  let res = await runner.runSeat('ada', 'edit please', { tools: 'write' });
   let [c] = fake.calls().slice(-1);
-  assert.equal(c.permissionMode, 'dontAsk'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob']);
-  await runner.runSeat('wri', 'edit please', { tools: 'write' });
+  assert.equal(c.permissionMode, 'dontAsk'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob']); assert.equal(res.mode, 'read');
+  res = await runner.runSeat('wri', 'edit please', { tools: 'write' });
   [c] = fake.calls().slice(-1);
-  assert.equal(c.permissionMode, 'acceptEdits'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob', 'Edit', 'Write']);
-  assert.ok(!/Do not modify files/.test(c.stdin), 'write mode header does not forbid edits');
-  await runner.runSeat('cox', 'edit please'); // write seat: default mode is write
+  assert.equal(c.permissionMode, 'dontAsk'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob']); assert.equal(res.mode, 'read');
+  assert.match(c.stdin, /Do not modify files\./, 'a clamped write turn is told not to edit');
+  assert.ok(samePath(c.cwd, store.project));
+  res = await runner.runSeat('cox', 'edit please'); // write seat: the default request is write, clamped to read
   [c] = fake.calls().slice(-1);
-  assert.equal(c.sandbox, 'workspace-write');
+  assert.equal(c.sandbox, 'read-only'); assert.equal(res.mode, 'read');
+  assert.ok(!c.args.includes('sandbox_workspace_write.network_access=false'));
   await runner.runSeat('cox', 'look only', { tools: 'read' });
   [c] = fake.calls().slice(-1);
   assert.equal(c.sandbox, 'read-only');
+  assert.equal(Object.keys(res).includes('mode'), false, 'mode is readable but not one of the enumerable result fields');
+});
+
+testWithFake(fake, 'writeGate: write mode only with a worktree the gate allows; the CLI then runs in that worktree without --add-dir', async (t) => {
+  if (!hasGit) return t.skip('git not available');
+  fake.scenario({ default: { reply: 'ok' } });
+  const wtRoot = tmpDir('ob-runner-wt-'), otherDir = tmpDir('ob-runner-other-');
+  const dirW = boardWorktree(wtRoot);
+  const asked = [];
+  const gated = createRunner({ store, seats, limits, settings: { lang: 'English' }, broadcast: (e) => events.push(e), retryDelaysMs: [20, 40], writeGate: (seat, d) => { asked.push([seat.id, d]); return d === dirW; } });
+  try {
+    let res = await gated.runSeat('wri', 'edit please', { tools: 'write', worktree: dirW });
+    let [c] = fake.calls().slice(-1);
+    assert.equal(res.ok, true); assert.equal(res.mode, 'write');
+    assert.equal(c.permissionMode, 'acceptEdits'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob', 'Edit', 'Write']);
+    assert.ok(samePath(c.cwd, dirW), `cwd ${c.cwd} is the worktree`); assert.equal(c.addDir, null);
+    assert.deepEqual(asked.at(-1), ['wri', dirW]);
+    // Codex file edits are off on every platform (plan 5.1): a Codex write request runs read even when the gate says yes.
+    res = await gated.runSeat('cox', 'edit please', { worktree: dirW });
+    [c] = fake.calls().slice(-1);
+    assert.equal(res.ok, true); assert.equal(res.mode, 'read'); assert.equal(c.sandbox, 'read-only'); assert.ok(samePath(c.cwd, dirW));
+    assert.ok(!c.args.includes('sandbox_workspace_write.network_access=false'));
+    // A worktree the gate does not allow: read mode, still in that directory.
+    res = await gated.runSeat('wri', 'edit please', { tools: 'write', worktree: otherDir });
+    [c] = fake.calls().slice(-1);
+    assert.equal(res.mode, 'read'); assert.equal(c.permissionMode, 'dontAsk'); assert.deepEqual(c.tools, ['Read', 'Grep', 'Glob']);
+    res = await gated.runSeat('cox', 'edit please', { tools: 'write', worktree: otherDir });
+    [c] = fake.calls().slice(-1);
+    assert.equal(res.mode, 'read'); assert.equal(c.sandbox, 'read-only'); assert.ok(samePath(c.cwd, otherDir));
+    // No worktree: the gate is not even asked.
+    const n = asked.length;
+    res = await gated.runSeat('wri', 'edit please', { tools: 'write' });
+    assert.equal(res.mode, 'read'); assert.equal(asked.length, n);
+    // A no-tools Codex turn keeps the empty cwd even with a worktree.
+    res = await gated.runSeat('cox', 'discuss', { tools: 'none', worktree: dirW });
+    [c] = fake.calls().slice(-1);
+    assert.equal(res.mode, 'none'); assert.ok(samePath(c.cwd, path.join(store.orch, 'empty')));
+    // A gate that throws means no.
+    const throwing = createRunner({ store, seats, limits, settings: { lang: 'English' }, broadcast: (e) => events.push(e), retryDelaysMs: [20, 40], writeGate: () => { throw new Error('boom'); } });
+    res = await throwing.runSeat('wri', 'edit please', { tools: 'write', worktree: dirW });
+    [c] = fake.calls().slice(-1);
+    assert.equal(res.ok, true); assert.equal(res.mode, 'read'); assert.equal(c.permissionMode, 'dontAsk');
+  } finally { rmrf(wtRoot); rmrf(otherDir); }
+});
+
+testWithFake(fake, 'Codex write clamp: with platform win32 and a gate that always says yes, a Codex write request runs read-only and a Claude write seat still writes', async (t) => {
+  if (!hasGit) return t.skip('git not available');
+  fake.scenario({ default: { reply: 'ok' } });
+  const wtRoot = tmpDir('ob-runner-clamp-');
+  const dirW = boardWorktree(wtRoot);
+  const win = createRunner({ store, seats, limits, settings: { lang: 'English' }, broadcast: (e) => events.push(e), retryDelaysMs: [], platform: 'win32', writeGate: () => true });
+  try {
+    let res = await win.runSeat('cox', 'edit please', { tools: 'write', worktree: dirW });
+    let [c] = fake.calls().slice(-1);
+    assert.equal(res.ok, true); assert.equal(res.mode, 'read');
+    assert.equal(c.agent, 'codex'); assert.equal(c.sandbox, 'read-only');
+    assert.ok(!c.args.includes('sandbox_mode="workspace-write"'));
+    res = await win.runSeat('wri', 'edit please', { tools: 'write', worktree: dirW });
+    [c] = fake.calls().slice(-1);
+    assert.equal(res.ok, true); assert.equal(res.mode, 'write');
+    assert.equal(c.agent, 'claude'); assert.equal(c.permissionMode, 'acceptEdits');
+  } finally { rmrf(wtRoot); }
+});
+
+test('CLAUDE_TOOLS.write is exactly CLAUDE_WRITE_TOOLS and the write argv ends with --tools and exactly those names', () => {
+  assert.deepEqual(CLAUDE_TOOLS.write, [...CLAUDE_WRITE_TOOLS]);
+  for (const thread of [null, 'abc']) {
+    const args = claudeAdapter.buildArgs({ model: 'claude-sonnet-5-5', effort: 'low', thread, sessionId: thread ? null : 'sid', mode: 'write' });
+    const i = args.indexOf('--tools');
+    assert.equal(args.lastIndexOf('--tools'), i);
+    assert.deepEqual(args.slice(i), ['--tools', ...CLAUDE_WRITE_TOOLS]);
+  }
 });
 
 testWithFake(fake, 'tools none: claude gets --tools "", codex runs inside .orchestra/empty; the prompt carries the no-tools note', async () => {

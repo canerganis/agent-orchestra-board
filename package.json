@@ -1,7 +1,7 @@
 {
   "name": "agent-orchestra-board",
-  "version": "0.1.0",
-  "description": "Local board that runs Claude Code CLI and Codex CLI agents as one team: debate, propose and review, and direct chat, with a live workflow view and usage meters.",
+  "version": "0.2.0",
+  "description": "Local board that runs Claude Code CLI and Codex CLI agents as one team: debate, propose and review, direct chat, and Plan → Approve → Build with per-item git worktrees. Live workflow view and usage meters.",
   "license": "MIT",
   "author": "Can Erganis",
   "homepage": "https://github.com/canerganis/agent-orchestra-board#readme",
@@ -31,6 +31,7 @@
     "bin",
     "src",
     "public",
+    "bench/demo-rooms",
     "server.js"
   ],
   "engines": {
@@ -38,7 +39,7 @@
   },
   "scripts": {
     "start": "node bin/agent-orchestra-board.js",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=4",
     "doctor": "node bin/agent-orchestra-board.js doctor"
   }
 }

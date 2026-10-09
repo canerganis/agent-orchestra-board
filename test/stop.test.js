@@ -1,4 +1,4 @@
-// Stop semantics with hanging fake CLIs (port 4394): seat stop in a DM, DM room stop cancelling queued turns,
+// Stop semantics with hanging fake CLIs: seat stop in a DM, DM room stop cancelling queued turns,
 // meeting stop, deleting a running room; the CLI process tree must really die (taskkill /T on Windows).
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -7,13 +7,12 @@ const path = require('path');
 const { tmpDir, waitFor, startApp, testWithFake, isDead, treeDead, treePids, teardown } = require('./helpers');
 const { setupFakeCli } = require('./fake-cli');
 
-const PORT = 4394;
 let dir, project, fake, ctx;
 
 before(async () => {
   dir = tmpDir('ob-stop-'); project = path.join(dir, 'project'); fs.mkdirSync(project);
   fake = setupFakeCli(dir);
-  ctx = await startApp({ port: PORT, projectDir: project });
+  ctx = await startApp({ projectDir: project });
   for (const s of [
     { name: 'Ada', role: 'Builder', agent: 'claude', model: 'claude-sonnet-5-5', effort: 'medium', perm: 'read' },
     { name: 'Bob', role: 'Reviewer', agent: 'codex', model: 'gpt-6-luna', effort: 'medium', perm: 'read' },

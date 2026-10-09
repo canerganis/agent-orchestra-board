@@ -2,7 +2,7 @@
 
 | | |
 | --- | --- |
-| Status | Accepted (v0.1.0) |
+| Status | Superseded in part by ADR 0006 (v0.2.0): write seats edit only per-item worktrees |
 | Recorded | 2026-10-07, **retroactively**, by AI agents drafting from the commit history, `.orchestra/LOG.md` and the code; not written when the decision was made |
 | Decision made | approx. 2026-10-07, after a board-run planning meeting whose synthesis recommended it (`.orchestra/LOG.md`: "Planning meeting for GitHub-ready v0.1: consensus read-only v0.1, security gate, adapters + fake-CLI tests") and the owner's decision entry that followed ("user \| Decisions: v0.1 read-only; ...") |
 | Decided by | Can Erganis (project owner), on the recommendation of the 4-seat planning meeting. The record was drafted by agents |

@@ -11,6 +11,8 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const SCRIPT = path.join(__dirname, 'fake-cli.js');
+// Upper bound for one csc.exe build (a stalled antivirus scan must fail setup, not hang it).
+const CSC_TIMEOUT_MS = 120000;
 
 function findCsc() {
   const win = process.env.WINDIR || process.env.SystemRoot || 'C:\\Windows';
@@ -40,7 +42,9 @@ function buildWrappers(binDir) {
   // characters in the embedded node/script paths (e.g. a user folder with Turkish letters).
   fs.writeFileSync(cs, '﻿' + src);
   const claudeBin = path.join(binDir, 'fake-claude.exe'), codexBin = path.join(binDir, 'fake-codex.exe');
-  const r = spawnSync(csc, ['/nologo', '/optimize', '/target:exe', '/nowarn:1701,1702', `/out:${claudeBin}`, cs], { encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(csc, ['/nologo', '/optimize', '/target:exe', '/nowarn:1701,1702', `/out:${claudeBin}`, cs], { encoding: 'utf8', windowsHide: true, timeout: CSC_TIMEOUT_MS });
+  // spawnSync blocks the event loop, so test timeouts cannot fire: an expired build must fail loudly right here.
+  if (r.error) throw new Error(`building the fake CLI shim with csc.exe did not finish within ${CSC_TIMEOUT_MS}ms: ${r.error.message}`);
   if (r.status !== 0) return { claudeBin: null, codexBin: null, skipReason: `csc failed (${r.status}): ${(r.stdout || '') + (r.stderr || '')}`.trim() };
   fs.copyFileSync(claudeBin, codexBin);
   return { claudeBin, codexBin, skipReason: null };
@@ -57,14 +61,18 @@ function setupFakeCli(dir) {
   Object.assign(process.env, env);
 
   const callsFile = path.join(fakeDir, 'calls.jsonl');
-  const calls = () => { let s; try { s = fs.readFileSync(callsFile, 'utf8'); } catch { return []; } return s.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); };
+  const readJsonl = (file) => { let s; try { s = fs.readFileSync(file, 'utf8'); } catch { return []; } return s.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean); };
+  const calls = () => readJsonl(callsFile);
+  const writesFile = path.join(fakeDir, 'writes.jsonl');
 
   return {
     ...built, dir: fakeDir, env,
     // scenario(rules[]) or scenario({rules, default})
     scenario(s) { fs.writeFileSync(path.join(fakeDir, 'scenario.json'), JSON.stringify(Array.isArray(s) ? { rules: s } : s, null, 2)); },
     calls,
-    resetCalls() { try { fs.unlinkSync(callsFile); } catch {} for (const g of fs.readdirSync(path.join(fakeDir, 'gates'))) fs.unlinkSync(path.join(fakeDir, 'gates', g)); },
+    // File operations the fake performed (writeFiles / deleteFiles), one entry per operation: {n, op, path, ok, error}.
+    writes: () => readJsonl(writesFile),
+    resetCalls() { try { fs.unlinkSync(callsFile); } catch {} try { fs.unlinkSync(writesFile); } catch {} for (const g of fs.readdirSync(path.join(fakeDir, 'gates'))) fs.unlinkSync(path.join(fakeDir, 'gates', g)); },
     openGate(name) { fs.writeFileSync(path.join(fakeDir, 'gates', name), '1'); },
     // Resolves with the matching calls once at least `count` of them were logged.
     waitCalls(pred, count = 1, timeout = 15000) {

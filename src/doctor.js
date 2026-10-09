@@ -1,8 +1,11 @@
 // Environment checks for `orchestra-board doctor` (table) and GET /api/doctor (JSON).
-// Never makes a model call: the only processes spawned are `<cli> --version` (via cmd.exe for a .cmd shim), always
-// from the file resolved on PATH, never from a project directory (platform.spawnResolved). Never
-// writes to disk except a probe file it removes again. Never prints secrets: credential files and environment
-// variables are inspected for presence and shape only (auth mode, subscription tier, expiry).
+// Plain doctor never makes a model call. The opt-in `doctor --containment`, which does start the real CLIs, lives in
+// containment-check.js and is reached only from the CLI entry: this file never requires it.
+// No model call here: the only processes spawned are `<cli> --version` and the CLIs' own login status commands
+// (`claude auth status`, `codex login status`), via cmd.exe for a .cmd shim, always from the file resolved on PATH,
+// never from a project directory (platform.spawnResolved). Never writes to disk except a probe file it removes again.
+// Never reads credential files (nothing under ~/.claude or ~/.codex decides the login state) and never prints the
+// status commands' output.
 const fs = require('fs');
 const os = require('os');
 const net = require('net');
@@ -14,18 +17,21 @@ const { codexEnv, killTree, resolveBin, resolveShims, isExecutableFile, spawnRes
 const WIN = process.platform === 'win32';
 const SHIM = /\.(cmd|bat)$/i;
 const check = (id, name, status, detail, hint) => ({ id, name, status, detail, ...(hint ? { hint } : {}) });
-const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return null; } };
-const day = (ms) => { const d = new Date(ms); return isNaN(d) ? '?' : d.toISOString().slice(0, 10); };
+// A CLI check also carries its engine state (plan 2.6); see cliCheck.
+const withState = (c, state) => ({ ...c, state });
+// Login status commands get a short timeout of their own: they only read local state.
+const STATUS_TIMEOUT_MS = 5000;
 
-// Run `<exe> --version` with a timeout. `exe` is the resolved file. shim: run a .cmd/.bat through cmd.exe
+// Run `<exe> <cliArgs>` with a timeout. `exe` is the resolved file. shim: run a .cmd/.bat through cmd.exe
 // (quoted as a whole, so paths with spaces work; no deprecated shell:true). Timeouts kill the whole tree.
-function versionOf(exe, env, timeoutMs, { shim = false, spawnFn = spawnResolved } = {}) {
+// Resolves { error } | { timeout } | { code, out, text }, never rejects. cliArgs are fixed words, never user input.
+function runCli(exe, cliArgs, env, timeoutMs, { shim = false, spawnFn = spawnResolved } = {}) {
   return new Promise((resolve) => {
     let child; let t; let out = ''; let done = false;
     const finish = (r) => { if (!done) { done = true; if (t) clearTimeout(t); resolve(r); } };
     const [cmd, args, extra] = shim && WIN
-      ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${exe}" --version"`], { windowsVerbatimArguments: true }]
-      : [exe, ['--version'], {}];
+      ? [process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `""${exe}" ${cliArgs.join(' ')}"`], { windowsVerbatimArguments: true }]
+      : [exe, cliArgs, {}];
     try { child = spawnFn(cmd, args, { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'], ...extra }); }
     catch (e) { return finish({ error: e }); }
     t = setTimeout(() => { finish({ timeout: true }); try { killTree(child); } catch {} }, timeoutMs);
@@ -33,9 +39,12 @@ function versionOf(exe, env, timeoutMs, { shim = false, spawnFn = spawnResolved 
     child.stdout?.on('data', (d) => { out += d; });
     child.stderr?.on('data', (d) => { out += d; });
     child.on('error', (e) => finish({ error: e }));
-    child.on('close', (code) => finish({ code, text: out.trim().split(/\r?\n/).find((l) => /\d+\.\d+/.test(l)) || out.trim().split(/\r?\n/)[0] || '' }));
+    child.on('close', (code) => finish({ code, out, text: out.trim().split(/\r?\n/).find((l) => /\d+\.\d+/.test(l)) || out.trim().split(/\r?\n/)[0] || '' }));
   });
 }
+
+// Run `<exe> --version`; see runCli.
+const versionOf = (exe, env, timeoutMs, opts) => runCli(exe, ['--version'], env, timeoutMs, opts);
 
 function nodeCheck() {
   const major = Number(process.versions.node.split('.')[0]);
@@ -53,6 +62,9 @@ function cwdShadow(bin, projectDir) {
 }
 
 // opts: { spawnFn? (tests), projectDir? (cwd shadow warning) }
+// Every result also carries `state` (plan 2.6), which the engines and pickers read: 'missing' (not on PATH), 'broken'
+// (only a .cmd/.bat shim, or the exe cannot start), 'warn' (the version check timed out or exited non-zero, or a
+// project file shadows the name) or 'ok'. Login checks never set it.
 async function cliCheck(agent, bin, env, timeoutMs, { spawnFn = spawnResolved, projectDir = null } = {}) {
   const name = agent === 'claude' ? 'Claude CLI' : 'Codex CLI';
   const envVar = agent === 'claude' ? 'ORCHESTRA_CLAUDE_BIN' : 'ORCHESTRA_CODEX_BIN';
@@ -63,7 +75,7 @@ async function cliCheck(agent, bin, env, timeoutMs, { spawnFn = spawnResolved, p
   const via = process.env[envVar] && bin === process.env[envVar] ? ` (${envVar}=${bin})` : '';
   const exes = resolveBin(bin, env);
   const shims = resolveShims(bin, env);
-  if (!exes.length && !shims.length) return check(agent, name, 'fail', `'${bin}' not found on PATH${via}`, install);
+  if (!exes.length && !shims.length) return withState(check(agent, name, 'fail', `'${bin}' not found on PATH${via}`, install), 'missing');
   const exeHint = agent === 'codex'
     ? 'an npm install keeps the vendored codex.exe inside <npm prefix>\\node_modules\\@openai\\codex\\ (under its platform package), or download the native build from github.com/openai/codex/releases'
     : 'the npm package may ship no .exe at all: use the native installer (https://claude.com/claude-code)';
@@ -73,66 +85,52 @@ async function cliCheck(agent, bin, env, timeoutMs, { spawnFn = spawnResolved, p
     const shim = shims[0];
     const r = await versionOf(shim, env, timeoutMs, { shim: true, spawnFn });
     const ver = r.code === 0 && r.text ? r.text.slice(0, 60) : r.timeout ? '--version timed out' : r.error ? `--version failed: ${r.error.code || r.error.message}` : `--version exited ${r.code}`;
-    return check(agent, name, 'warn', `${ver} — ${shim} is a ${path.extname(shim)} shim, which the board cannot launch (spawn: ${SHIM.test(bin) ? 'EINVAL' : 'ENOENT'})${via}`, shimHint);
+    return withState(check(agent, name, 'warn', `${ver} — ${shim} is a ${path.extname(shim)} shim, which the board cannot launch (spawn: ${SHIM.test(bin) ? 'EINVAL' : 'ENOENT'})${via}`, shimHint), 'broken');
   }
   const exe = exes[0];
   const r = await versionOf(exe, env, timeoutMs, { spawnFn });
   if (r.error) {
-    if (shims.length) return check(agent, name, 'warn', `${exe} could not be started (${r.error.code || r.error.message}); ${shims[0]} is a ${path.extname(shims[0])} shim, which the board cannot launch${via}`, shimHint);
-    return check(agent, name, 'fail', `'${bin}' could not be started: ${r.error.code || r.error.message} — ${exe}${via}`, install);
+    if (shims.length) return withState(check(agent, name, 'warn', `${exe} could not be started (${r.error.code || r.error.message}); ${shims[0]} is a ${path.extname(shims[0])} shim, which the board cannot launch${via}`, shimHint), 'broken');
+    return withState(check(agent, name, 'fail', `'${bin}' could not be started: ${r.error.code || r.error.message} — ${exe}${via}`, install), 'broken');
   }
-  if (r.timeout) return check(agent, name, 'warn', `'${bin} --version' timed out after ${timeoutMs / 1000}s — ${exe}${via}`);
-  if (r.code !== 0) return check(agent, name, 'warn', `'${bin} --version' exited ${r.code}${r.text ? `: ${r.text.slice(0, 80)}` : ''} — ${exe}${via}`);
+  if (r.timeout) return withState(check(agent, name, 'warn', `'${bin} --version' timed out after ${timeoutMs / 1000}s — ${exe}${via}`), 'warn');
+  if (r.code !== 0) return withState(check(agent, name, 'warn', `'${bin} --version' exited ${r.code}${r.text ? `: ${r.text.slice(0, 80)}` : ''} — ${exe}${via}`), 'warn');
   const ver = r.text.slice(0, 60) || 'version unknown';
   const more = exes.length > 1 ? ` (+${exes.length - 1} more on PATH)` : '';
   const shadow = cwdShadow(bin, projectDir);
-  if (shadow) return check(agent, name, 'warn', `${ver} — ${exe}${more}${via}; note that ${shadow} exists in the project. The board ignores it (CLIs are resolved on PATH, never in the project), but a bare \`${bin}\` typed in cmd.exe inside that directory would run it`,
-    'Check why the project ships an executable named like the CLI before letting agents loose on it.');
-  return check(agent, name, 'ok', `${ver} — ${exe}${more}${via}`);
+  if (shadow) return withState(check(agent, name, 'warn', `${ver} — ${exe}${more}${via}; note that ${shadow} exists in the project. The board ignores it (CLIs are resolved on PATH, never in the project), but a bare \`${bin}\` typed in cmd.exe inside that directory would run it`,
+    'Check why the project ships an executable named like the CLI before letting agents loose on it.'), 'warn');
+  return withState(check(agent, name, 'ok', `${ver} — ${exe}${more}${via}`), 'ok');
 }
 
-function claudeLoginCheck(env = process.env) {
-  if (env.ANTHROPIC_API_KEY) return check('claudeLogin', 'Claude login', 'ok', 'API key from ANTHROPIC_API_KEY (value not shown)');
-  if (env.CLAUDE_CODE_OAUTH_TOKEN) return check('claudeLogin', 'Claude login', 'ok', 'OAuth token from CLAUDE_CODE_OAUTH_TOKEN (value not shown)');
-  if (env.ANTHROPIC_AUTH_TOKEN) return check('claudeLogin', 'Claude login', 'ok', 'auth token from ANTHROPIC_AUTH_TOKEN (value not shown)');
-  if (env.CLAUDE_CODE_USE_BEDROCK === '1' || env.CLAUDE_CODE_USE_VERTEX === '1' || env.CLAUDE_CODE_USE_FOUNDRY === '1') {
-    return check('claudeLogin', 'Claude login', 'ok', 'cloud provider auth via CLAUDE_CODE_USE_* environment');
-  }
-  const dir = env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
-  const creds = readJson(path.join(dir, '.credentials.json'));
-  const oauth = creds && creds.claudeAiOauth;
-  if (oauth && (oauth.accessToken || oauth.refreshToken)) {
-    const tier = [oauth.subscriptionType, oauth.rateLimitTier].filter(Boolean).join(', ');
-    const refreshExp = Number(oauth.refreshTokenExpiresAt);
-    if (refreshExp && refreshExp < Date.now()) {
-      return check('claudeLogin', 'Claude login', 'warn', `claude.ai login found${tier ? ` (${tier})` : ''} but its refresh token expired ${day(refreshExp)}`, 'Run `claude login` to sign in again.');
-    }
-    const exp = Number(oauth.expiresAt);
-    const note = exp ? (exp < Date.now() ? '; access token expired (refreshes on next run)' : `; token valid until ${day(exp)}`) : '';
-    return check('claudeLogin', 'Claude login', 'ok', `claude.ai login${tier ? ` (${tier})` : ''}${note} — ${path.join(dir, '.credentials.json')}`);
-  }
-  if (creds && creds.primaryApiKey) return check('claudeLogin', 'Claude login', 'ok', `API key stored in ${path.join(dir, '.credentials.json')} (value not shown)`);
-  if (process.platform === 'darwin') return check('claudeLogin', 'Claude login', 'skip', 'credentials live in the macOS Keychain; cannot verify without a paid call');
-  const acct = (readJson(path.join(os.homedir(), '.claude.json')) || {}).oauthAccount;
-  return check('claudeLogin', 'Claude login', 'warn', acct ? `account configured but no credential file in ${dir}` : `no credentials found in ${dir}`,
-    'Run `claude login` (or set ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`).');
+// A CLI that does not know the status subcommand. commander says "unknown command", clap says
+// "unrecognized subcommand" or "unexpected argument".
+const MISSING_SUBCOMMAND = /unknown (sub)?command|unrecognized (sub)?command|invalid (sub)?command|no such (sub)?command|unexpected argument/i;
+
+// Login state from the CLI's own status command: exit 0 means logged in. Credential files are never read: a missing
+// subcommand, a timeout or a spawn failure means "unknown", never a guess from disk. The command's output may name
+// the account, so it is matched but never shown.
+// opts: { spawnFn? (tests) }
+async function loginCheck(agent, bin, cliArgs, env, timeoutMs, { spawnFn = spawnResolved } = {}) {
+  const id = agent === 'claude' ? 'claudeLogin' : 'codexLogin';
+  const name = agent === 'claude' ? 'Claude login' : 'Codex login';
+  const loginHint = agent === 'claude' ? 'Run `claude login` (or set CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`).' : 'Run `codex login`.';
+  const cmdText = `\`${bin} ${cliArgs.join(' ')}\``;
+  const ms = Math.min(timeoutMs, STATUS_TIMEOUT_MS);
+  const exes = resolveBin(bin, env);
+  const shims = exes.length ? [] : resolveShims(bin, env);
+  if (!exes.length && !shims.length) return check(id, name, 'skip', `'${bin}' not found on PATH; login state unknown`);
+  const r = await runCli(exes[0] || shims[0], cliArgs, env, ms, { shim: !exes.length, spawnFn });
+  const unknown = (why) => check(id, name, 'warn', `login state unknown: ${why}`, `Update the CLI, or run ${cmdText} yourself.`);
+  if (r.error) return unknown(`${cmdText} could not be started (${r.error.code || r.error.message})`);
+  if (r.timeout) return unknown(`${cmdText} timed out after ${ms / 1000}s`);
+  if (r.code === 0) return check(id, name, 'ok', `logged in (${cmdText} exited 0)`);
+  if (MISSING_SUBCOMMAND.test(r.out || '')) return unknown(`this CLI has no ${cmdText} command`);
+  return check(id, name, 'warn', `not logged in (${cmdText} exited ${r.code})`, loginHint);
 }
 
-function codexLoginCheck(env = process.env) {
-  const home = env.CODEX_HOME || path.join(os.homedir(), '.codex');
-  const authFile = path.join(home, 'auth.json');
-  const auth = readJson(authFile);
-  if (auth) {
-    const t = auth.tokens || {};
-    const refreshed = auth.last_refresh ? ` (refreshed ${day(auth.last_refresh)})` : '';
-    if (t.access_token || t.refresh_token || t.id_token) {
-      return check('codexLogin', 'Codex login', 'ok', `ChatGPT login${auth.auth_mode ? ` (auth_mode ${auth.auth_mode})` : ''}${refreshed} — ${authFile}`);
-    }
-    if (auth.OPENAI_API_KEY) return check('codexLogin', 'Codex login', 'ok', `API key stored in auth.json (value not shown)${refreshed} — ${authFile}`);
-  }
-  if (env.OPENAI_API_KEY) return check('codexLogin', 'Codex login', 'ok', 'API key from OPENAI_API_KEY (value not shown)');
-  return check('codexLogin', 'Codex login', 'warn', auth ? `${authFile} has no tokens` : `no credentials found in ${home}`, 'Run `codex login` (or set OPENAI_API_KEY).');
-}
+const claudeLoginCheck = (bin, env, timeoutMs, opts) => loginCheck('claude', bin, ['auth', 'status'], env, timeoutMs, opts);
+const codexLoginCheck = (bin, env, timeoutMs, opts) => loginCheck('codex', bin, ['login', 'status'], env, timeoutMs, opts);
 
 // Minimal TOML scan: value of `sandbox` inside the [windows] table.
 function codexSandboxSetting(configFile) {
@@ -148,8 +146,16 @@ function codexSandboxSetting(configFile) {
   return { exists: true, value };
 }
 
+// Appended to every Windows sandbox result: whatever the setting, the board keeps Codex file edits off on Windows.
+const CODEX_WIN_WRITES_OFF = '; Codex file edits are off on Windows (the unelevated sandbox does not confine writes)';
+
 function codexSandboxCheck() {
   if (!WIN) return check('codexSandbox', 'Codex Windows sandbox', 'skip', 'Windows only');
+  const c = codexSandboxSettingCheck();
+  return { ...c, detail: c.detail + CODEX_WIN_WRITES_OFF };
+}
+
+function codexSandboxSettingCheck() {
   const home = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
   const cfg = codexSandboxSetting(path.join(home, 'config.toml'));
   const launch = 'Agent Orchestra Board launches Codex with -c windows.sandbox="unelevated"';
@@ -158,6 +164,15 @@ function codexSandboxCheck() {
   if (cfg.value === 'unelevated') return check('codexSandbox', 'Codex Windows sandbox', 'ok', `config.toml windows.sandbox = "unelevated" (matches the board's launch flag)`);
   return check('codexSandbox', 'Codex Windows sandbox', 'ok', `config.toml windows.sandbox = "${cfg.value}"; overridden per launch (${launch})`,
     cfg.value === 'elevated' ? 'The elevated sandbox needs an admin setup; the board does not rely on it.' : undefined);
+}
+
+// ORCHESTRA_CLAUDE_BIN / ORCHESTRA_CODEX_BIN replace the CLI found on PATH for every turn: worth a warning, since
+// a stale or unexpected override runs that file with the project as its working folder. null when neither is set.
+function binOverrideCheck(env = process.env) {
+  const set = ['ORCHESTRA_CLAUDE_BIN', 'ORCHESTRA_CODEX_BIN'].filter((k) => typeof env[k] === 'string' && env[k] !== '');
+  if (!set.length) return null;
+  return check('binOverride', 'CLI override', 'warn', `${set.map((k) => `${k}=${env[k]}`).join(', ')}: the board runs ${set.length === 1 ? 'this file' : 'these files'} instead of the CLI found on PATH`,
+    'Unset the variable unless you meant to point the board at another build of the CLI.');
 }
 
 // The Microsoft Store `pwsh` alias (WindowsApps) cannot be launched from the unelevated sandbox, so Codex children
@@ -220,26 +235,28 @@ function orchestraWriteCheck(projectDir, projectOk = true) {
   }
 }
 
-// run({ projectDir, port?, running?, timeoutMs? }) -> { ok, checks: [{id, name, status: ok|warn|fail|skip, detail, hint?}] }
+// run({ projectDir, port?, running?, timeoutMs?, spawnFn? (tests) }) -> { ok, checks: [{id, name, status: ok|warn|fail|skip, detail, hint?}] }
 // `running: true` means the caller is the live server on `port` (so "in use" is expected). `ok` is false when any check failed.
 async function run(opts = {}) {
   const projectDir = path.resolve(opts.projectDir || process.cwd());
   const port = opts.port == null ? null : Number(opts.port);
   const timeoutMs = opts.timeoutMs || 10000;
   const project = projectCheck(projectDir);
-  const cliOpts = { projectDir: project.status === 'ok' ? projectDir : null };
+  const cliOpts = { projectDir: project.status === 'ok' ? projectDir : null, ...(opts.spawnFn ? { spawnFn: opts.spawnFn } : {}) };
   const checks = await Promise.all([
     nodeCheck(),
     cliCheck('claude', claudeBin(), process.env, timeoutMs, cliOpts),
     cliCheck('codex', codexBin(), codexEnv(), timeoutMs, cliOpts),
-    claudeLoginCheck(),
-    codexLoginCheck(),
+    claudeLoginCheck(claudeBin(), process.env, timeoutMs, cliOpts),
+    codexLoginCheck(codexBin(), codexEnv(), timeoutMs, cliOpts),
     codexSandboxCheck(),
     pwshCheck(),
     portCheck(port, !!opts.running),
     project,
     orchestraWriteCheck(projectDir, project.status === 'ok'),
   ]);
+  const override = binOverrideCheck();
+  if (override) checks.push(override);
   return { ok: !checks.some((c) => c.status === 'fail'), checks };
 }
 
@@ -259,4 +276,4 @@ function format(result, { color = false } = {}) {
   return lines.join('\n');
 }
 
-module.exports = { run, format, resolveBin, resolveShims, versionOf, cliCheck, claudeLoginCheck, orchestraWriteCheck, projectCheck };
+module.exports = { run, format, resolveBin, resolveShims, versionOf, cliCheck, claudeLoginCheck, codexLoginCheck, orchestraWriteCheck, projectCheck, binOverrideCheck, codexSandboxCheck };

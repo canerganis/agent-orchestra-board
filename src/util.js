@@ -1,4 +1,6 @@
 // Small shared helpers (no state).
+const crypto = require('crypto');
+
 const now = () => new Date().toISOString();
 const today = () => now().slice(0, 10);
 const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -20,4 +22,10 @@ function jsonlFeeder(onEvent) {
   };
 }
 
-module.exports = { now, today, newId, shortCmd, clip, lastLine, jsonlFeeder };
+// Error with an HTTP status and optional machine-readable code; expose:true lets the server send the message.
+const httpError = (status, message, code = null) => Object.assign(new Error(message), { status, code, expose: true });
+
+// Hex sha256 of a Buffer or string.
+const sha256 = (bufOrString) => crypto.createHash('sha256').update(bufOrString).digest('hex');
+
+module.exports = { now, today, newId, shortCmd, clip, lastLine, jsonlFeeder, httpError, sha256 };

@@ -1,29 +1,54 @@
-// Shared test helpers: temp projects under the OS temp dir, in-process server on a test port (4390-4399),
+// Shared test helpers: temp projects under the OS temp dir, in-process server on an OS assigned port,
 // a cookie-aware HTTP/SSE client and polling. No real CLI is ever started: callers point ORCHESTRA_*_BIN at the fakes.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 
 const tmpDir = (prefix = 'ob-test-') => fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 // Windows may still hold the freshly built fake-cli .exe (antivirus scan, exiting child): retry patiently.
 const rmrf = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 40, retryDelay: 100 }); } catch {} };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Polls fn (sync or async) until it returns a truthy value, which is resolved.
+// Rejects with a clear message when `promise` has not settled after `ms`. Every wait on something outside the test
+// (a close, an exit, a response) goes through this, so a stalled machine fails one test instead of hanging the suite.
+function withDeadline(promise, ms, what = 'operation') {
+  let timer;
+  const deadline = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`timed out after ${ms}ms waiting for ${what}`)), ms); });
+  return Promise.race([Promise.resolve(promise), deadline]).finally(() => clearTimeout(timer));
+}
+
+// Polls fn (sync or async) until it returns a truthy value, which is resolved. A single call of fn that never
+// returns is cut off by the same deadline.
 async function waitFor(fn, { timeout = 10000, interval = 25, what = 'condition' } = {}) {
   const t0 = Date.now();
   for (;;) {
-    const v = await fn();
+    const left = Math.max(1, timeout - (Date.now() - t0));
+    const v = await withDeadline(fn(), left, what);
     if (v) return v;
     if (Date.now() - t0 > timeout) throw new Error(`timed out after ${timeout}ms waiting for ${what}`);
     await sleep(interval);
   }
 }
 
+// Safety net for a test file: node:test only ends a file's process once the event loop drains, so one leaked socket
+// or child process would stall the whole run. The guard is registered after the file finished loading, so its hook
+// runs after every cleanup hook of the file; only then does the timer start. If the process is still alive ms later
+// it prints what happened and exits with a failing code (never 0, which would hide the leak).
+function exitGuard(ms = 15000) {
+  setImmediate(() => {
+    after(() => {
+      setTimeout(() => {
+        process.stderr.write(`exitGuard: this test file was still running ${ms}ms after its last cleanup hook (leaked socket, timer or child process); exiting with code 1\n`);
+        process.exit(1);
+      }, ms).unref();
+    });
+  });
+}
+
 // request(port, 'POST', '/api/x', {body, headers, host, cookie}) -> {status, headers, text, json}.
-function request(port, method, p, { body, headers = {}, host, cookie } = {}) {
+function request(port, method, p, { body, headers = {}, host, cookie, timeout = 60000 } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : typeof body === 'string' ? body : JSON.stringify(body);
     const h = { ...headers };
@@ -37,6 +62,7 @@ function request(port, method, p, { body, headers = {}, host, cookie } = {}) {
       res.on('end', () => { let json = null; try { json = JSON.parse(s); } catch {} resolve({ status: res.statusCode, headers: res.headers, text: s, json }); });
     });
     req.on('error', reject);
+    req.setTimeout(timeout, () => req.destroy(new Error(`${method} ${p} got no answer within ${timeout}ms`)));
     if (data !== null) req.write(data);
     req.end();
   });
@@ -62,6 +88,7 @@ function sse(port, { cookie } = {}) {
       });
     });
     req.on('error', (e) => { if (!hello) reject(e); });
+    req.setTimeout(30000, () => { if (!hello) req.destroy(new Error('no hello event on /api/events within 30000ms')); });
     const api = {
       events, status: null, headers: null, text: '',
       close: () => req.destroy(),
@@ -71,10 +98,8 @@ function sse(port, { cookie } = {}) {
   });
 }
 
-// Test servers may only use 4390-4399. In-process suites (startApp) live on 4390-4394 and the CLI suite, which
-// launches real child processes, on 4395-4399: a busy preferred port falls back to the next free one in its own
-// half only, so an in-process fallback can never race a CLI test for the port it just probed. Every suite reads
-// the port from the returned ctx.
+// In-process suites (startApp) bind port 0 and read the real port from ctx.port. Only the CLI suite, which launches
+// real child processes that need a numeric --port, uses the fixed range 4395-4399 through freePort().
 const PORT_RANGE = Array.from({ length: 10 }, (_, i) => 4390 + i);
 const APP_PORTS = PORT_RANGE.filter((p) => p <= 4394);
 const CLI_PORTS = PORT_RANGE.filter((p) => p >= 4395);
@@ -92,13 +117,18 @@ async function freePort(preferred, { range = CLI_PORTS, exclude = [] } = {}) {
 
 // Points HOME and USERPROFILE (what os.homedir() reads) at <dir>/home so nothing under the test ever touches the
 // developer's real ~/.codex/sessions, ~/.claude or ~/.claude.json: the limits poller and the codex refresh after
-// every codex turn read the newest rollout file from there. Returns the home path; idempotent per dir.
+// every codex turn read the newest rollout file from there. APPDATA and XDG_CONFIG_HOME follow, so the per-user
+// write-check records (capability.defaultRecordsDir) of a board started without a recordsDir land in the test home
+// too, never in the developer's real profile. Returns the home path; idempotent per dir.
 function isolateHome(dir) {
   const home = path.join(dir, 'home');
   fs.mkdirSync(path.join(home, '.codex', 'sessions'), { recursive: true });
   process.env.HOME = home; process.env.USERPROFILE = home; process.env.OB_TEST_HOME = home;
+  process.env.APPDATA = path.join(home, 'AppData', 'Roaming'); process.env.XDG_CONFIG_HOME = path.join(home, '.config');
   delete process.env.CODEX_HOME; // limits.js and doctor honour it: a developer's real Codex home must not leak in
   if (path.resolve(os.homedir()) !== path.resolve(home)) throw new Error(`home dir not redirected: os.homedir() = ${os.homedir()}`);
+  const records = require('../src/capability').defaultRecordsDir();
+  if (!path.resolve(records).startsWith(path.resolve(home) + path.sep)) throw new Error(`write-check records not redirected: ${records}`);
   return home;
 }
 
@@ -106,26 +136,23 @@ function isolateHome(dir) {
 // persists in <project>/.orchestra/session).
 // The home dir is isolated before createServer() (whose start() runs the limits poller) unless the caller already
 // did so through isolateHome()/setupFakeCli(); a home created here is removed again by ctx.stop().
-async function startApp({ port: preferred, projectDir }) {
+// platform simulates another OS for the write gate; recordsDir is where write-check records go (default: a folder in
+// the isolated test home, so a restarted board in the same suite sees the records of the one before).
+async function startApp({ projectDir, platform, recordsDir }) {
   const { createServer } = require('../src/server');
   let ownHome = null;
   if (!process.env.OB_TEST_HOME || !fs.existsSync(process.env.OB_TEST_HOME)) { ownHome = tmpDir('ob-home-'); isolateHome(ownHome); }
-  let app = null, info = null, port = null, lastErr = null;
-  // Suites run in parallel and each holds its port for its whole life: when all five app ports are busy, wait for one.
-  for (let attempt = 0; attempt < 60 && !app; attempt++) {
-    for (const p of candidates(preferred, APP_PORTS)) {
-      const candidate = createServer({ projectDir, port: p });
-      try { info = await candidate.start(); app = candidate; port = p; break; }
-      catch (e) { lastErr = e; try { await candidate.close(); } catch {} if (e && e.code !== 'EADDRINUSE') throw e; }
-    }
-    if (!app) await sleep(250);
-  }
-  if (!app) { if (ownHome) rmrf(ownHome); throw lastErr || new Error('no free test port in 4390-4394'); }
+  const records = recordsDir || path.join(process.env.OB_TEST_HOME, 'ob-records');
+  // Port 0: the OS hands out a free port, so overlapping test runs can never collide. start() reports the real one.
+  const app = createServer({ projectDir, port: 0, platform, recordsDir: records });
+  let info;
+  try { info = await app.start(); } catch (e) { try { await app.close(); } catch {} if (ownHome) rmrf(ownHome); throw e; }
+  const port = info.port;
   app.__testHome = ownHome;
   const token = app.token || (String(info.url).match(/[?&]t=([\w-]+)/) || [])[1] || null;
   const cookie = token ? `ob_session_${port}=${token}` : null;
   const ctx = {
-    app, port, token, cookie, info,
+    app, port, token, cookie, info, recordsDir: records,
     request: (method, p, o = {}) => request(port, method, p, { cookie, ...o }),
     get: (p, o = {}) => request(port, 'GET', p, { cookie, ...o }),
     post: (p, body, o = {}) => request(port, 'POST', p, { cookie, ...o, body: body === undefined ? {} : body }),
@@ -144,8 +171,7 @@ async function stopApp(app) {
   for (const s of app.seats.all()) if (app.seats.rtOf(s.id).child) app.runner.stopSeat(s.id);
   try { await waitFor(() => app.seats.all().every((s) => !app.seats.rtOf(s.id).child), { timeout: 8000, what: 'seat children to exit' }); } catch {}
   if (typeof app.server.closeAllConnections === 'function') app.server.closeAllConnections();
-  await app.close();
-  if (app.__testHome) rmrf(app.__testHome);
+  try { await withDeadline(app.close(), 20000, 'the board server to close'); } finally { if (app.__testHome) rmrf(app.__testHome); }
 }
 
 // Declares a test that is skipped (with the reason) when the fake CLI could not be built on this machine.
@@ -179,4 +205,28 @@ async function teardown(ctx, dir) {
   if (fs.existsSync(dir)) { await sleep(300); rmrf(dir); }
 }
 
-module.exports = { tmpDir, rmrf, sleep, waitFor, startApp, stopApp, request, sse, testWithFake, isDead, treePids, treeDead, canon, samePath, freePort, isolateHome, teardown, PORT_RANGE, APP_PORTS, CLI_PORTS };
+// Git helpers for worktree tests: a real repository in a temp dir, created with a fixed identity.
+const hasGit = (() => { try { return require('child_process').spawnSync('git', ['--version'], { windowsHide: true, timeout: 30000 }).status === 0; } catch { return false; } })();
+// Upper bound for one git call in a test (a stalled antivirus scan or a lock wait must fail the test, not hang it).
+const GIT_TIMEOUT_MS = 120000;
+function gitIn(dir, args) {
+  const r = require('child_process').spawnSync('git', args, { cwd: dir, encoding: 'utf8', windowsHide: true, timeout: GIT_TIMEOUT_MS });
+  if (r.error) throw new Error(`git ${args.join(' ')} did not finish: ${r.error.message}`);
+  if (r.status !== 0) throw new Error(r.stderr || `git ${args.join(' ')} failed`);
+  return String(r.stdout).trim();
+}
+// Creates a repository with one commit holding `files` ({relative path: content}); returns the HEAD sha.
+function initRepo(dir, files = { 'README.md': 'hello\n' }) {
+  fs.mkdirSync(dir, { recursive: true });
+  gitIn(dir, ['init', '-q']);
+  for (const [rel, content] of Object.entries(files)) {
+    const file = path.join(dir, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
+  gitIn(dir, ['add', '-A']);
+  gitIn(dir, ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'init']);
+  return gitIn(dir, ['rev-parse', 'HEAD']);
+}
+
+module.exports = { withDeadline, exitGuard, GIT_TIMEOUT_MS, tmpDir, rmrf, sleep, waitFor, startApp, stopApp, request, sse, testWithFake, isDead, treePids, treeDead, canon, samePath, freePort, isolateHome, teardown, hasGit, gitIn, initRepo, PORT_RANGE, APP_PORTS, CLI_PORTS };

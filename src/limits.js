@@ -11,22 +11,41 @@ const { now } = require('./util');
 const PROBE_TIMEOUT_MS = 90000;
 
 // spawnFn is injectable so tests never start the real CLI.
-function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
+const FRESH_MS = 30 * 60 * 1000; // a reading older than this is no longer shown as current
+// clock is injectable so tests can move time across a reset.
+function createLimits({ store, broadcast, spawnFn = spawnResolved, clock = Date.now, freshMs = FRESH_MS }) {
   const stored = store.readJson('limits.json');
   const limits = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : { claude: null, codex: null };
 
   // A write failure (antivirus lock, full disk) must not take the board down: the in-memory value still shows.
   const persist = () => { try { store.writeJson('limits.json', limits); } catch (e) { console.error(`orchestra-board: could not save limits.json: ${e.message}`); } };
+  // Each window's reading time lives in lim.observed[windowKey] (epoch ms of the observation that produced it; the
+  // windows themselves keep their shape). A window is stale when it has no observed time (data saved by an older
+  // version), when its reset time has passed, or when it is older than freshMs. lim.stale[windowKey] is derived on the
+  // way out (get and broadcast) and never persisted: it changes with the clock alone.
+  const obsOf = (lim, k) => (lim && lim.observed && typeof lim.observed[k] === 'number' && Number.isFinite(lim.observed[k]) ? lim.observed[k] : null);
+  const isStale = (lim, k, w, t) => { const o = obsOf(lim, k); return o === null || (w && typeof w.resetsAt === 'number' && t >= w.resetsAt) || t - o > freshMs; };
+  function view() {
+    const t = clock(), out = {};
+    for (const [agent, lim] of Object.entries(limits)) {
+      if (!lim || typeof lim !== 'object' || !lim.windows || typeof lim.windows !== 'object') { out[agent] = lim; continue; }
+      const stale = {};
+      for (const [k, w] of Object.entries(lim.windows)) stale[k] = isStale(lim, k, w, t);
+      out[agent] = { ...lim, stale };
+    }
+    return out;
+  }
+  const emit = () => broadcast({ t: 'limits', limits: view() });
   function setLimits(agent, data) {
     limits[agent] = { ...data, updated: now() };
-    persist(); broadcast({ t: 'limits', limits });
+    persist(); emit();
   }
   // Keeps the last known windows AND their `updated` stamp (the UI treats `updated` as the data's age: a failed
   // refresh must not make months-old windows look fresh). The failure itself is dated separately in `errorAt`.
   function setError(agent, message) {
     const prev = limits[agent] && typeof limits[agent] === 'object' ? limits[agent] : {};
     limits[agent] = { ...prev, error: String(message), errorAt: now() };
-    persist(); broadcast({ t: 'limits', limits });
+    persist(); emit();
   }
   // rate_limit_info fields are undocumented and often partial: any of them may be missing. resetsAt is epoch seconds
   // (ms or an ISO string tolerated). An event that carries no usable window keeps the windows already known.
@@ -46,7 +65,9 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
     const known = Object.keys(wins).length > 0;
     if (!known && typeof info.status !== 'string' && info.isUsingOverage == null) return; // nothing usable
     setLimits('claude', {
-      // A partial event (one window only) updates that window and keeps the others already known.
+      // A partial event (one window only) updates that window and keeps the others already known, with their own
+      // observed time: an event without window data never refreshes an old window.
+      observed: { ...(prev.observed && typeof prev.observed === 'object' ? prev.observed : {}), ...Object.fromEntries(Object.keys(wins).map((k) => [k, clock()])) },
       windows: known ? { ...(prev.windows && typeof prev.windows === 'object' ? prev.windows : {}), ...wins } : prev.windows || {},
       status: typeof info.status === 'string' ? info.status : prev.status,
       overage: info.isUsingOverage != null ? !!info.isUsingOverage : !!prev.overage,
@@ -87,9 +108,19 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
     const lines = fs.readFileSync(f, 'utf8').split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i].includes('"rate_limits"')) continue;
-      let rl; try { rl = JSON.parse(lines[i]).payload?.rate_limits; } catch { continue; } // a half-written last line is skipped
+      let rl, evTs; try { const ev = JSON.parse(lines[i]); rl = ev.payload?.rate_limits; evTs = ev.timestamp; } catch { continue; } // a half-written last line is skipped
       rl = pickCodexLimits(rl);
       if (!rl) continue;
+      // The observation time is the event's own timestamp; the file mtime only stands in when the event has none.
+      let obs = Date.parse(evTs); if (!Number.isFinite(obs)) obs = mt;
+      const prev = limits.codex && typeof limits.codex === 'object' ? limits.codex : null;
+      const prevWins = prev && prev.windows && typeof prev.windows === 'object' ? Object.entries(prev.windows) : [];
+      // Never go back in time: an event older than what is already shown, or older than a reset that has already
+      // happened, describes the window before that reset.
+      const t = clock();
+      const lastObs = Math.max(0, ...prevWins.map(([k]) => obsOf(prev, k) || 0));
+      const lastReset = Math.max(0, ...prevWins.map(([, w]) => (w && typeof w.resetsAt === 'number' && w.resetsAt <= t ? w.resetsAt : 0)));
+      if (obs < lastObs || obs < lastReset) return;
       const wins = {};
       // Tolerant: secondary may be null, a window may lack window_minutes / resets_at, used_percent may be missing.
       for (const w of [rl.primary, rl.secondary]) {
@@ -99,7 +130,7 @@ function createLimits({ store, broadcast, spawnFn = spawnResolved }) {
         wins[key] = { pct: w.used_percent, minutes: mins, resetsAt: resetMs(w.resets_at) };
       }
       if (!Object.keys(wins).length && rl.plan_type === undefined) continue;
-      return setLimits('codex', { windows: wins, plan: rl.plan_type ?? null, reached: rl.rate_limit_reached_type ?? null, ...(typeof rl.limit_id === 'string' ? { limitId: rl.limit_id } : {}) });
+      return setLimits('codex', { windows: wins, observed: Object.fromEntries(Object.keys(wins).map((k) => [k, obs])), plan: rl.plan_type ?? null, reached: rl.rate_limit_reached_type ?? null, ...(typeof rl.limit_id === 'string' ? { limitId: rl.limit_id } : {}) });
     }
   }
   const refreshCodex = () => { try { readCodexLimits(); } catch {} };
@@ -169,7 +200,7 @@ ${stderr}`) !== 'auth';
     });
   }
 
-  return { get: () => limits, setLimits, claudeLimits, readCodexLimits, refreshCodex, start, stop, probeClaude };
+  return { get: view, setLimits, claudeLimits, readCodexLimits, refreshCodex, start, stop, probeClaude };
 }
 
 module.exports = { createLimits };

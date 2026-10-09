@@ -1,0 +1,255 @@
+{
+  "id": "demo-build",
+  "kind": "build",
+  "title": "Build: Add a frozen --json output to the taskly CLI",
+  "status": "needs-you",
+  "created": "2026-10-01T09:20:00.000Z",
+  "round": 0,
+  "planRoomId": "demo-plan",
+  "planRevision": 1,
+  "planHash": "0000000000000000000000000000000000000000000000000000000000000001",
+  "mode": "propose",
+  "modeReason": "demo, nothing is edited",
+  "roles": {},
+  "resolved": {
+    "builder": "claude",
+    "reviewer": "luna"
+  },
+  "roleNotes": [],
+  "baseCommit": null,
+  "expectedTree": null,
+  "maxRounds": 3,
+  "escalate": false,
+  "order": [
+    "format-json",
+    "pin-schema",
+    "docs-json"
+  ],
+  "applied": [
+    "format-json",
+    "pin-schema"
+  ],
+  "baseApplied": [],
+  "resumeNeeded": false,
+  "items": {
+    "format-json": {
+      "id": "format-json",
+      "title": "Add --json output to list",
+      "difficulty": "easy",
+      "owns": [
+        "src/format.js"
+      ],
+      "dependsOn": [],
+      "itemHash": "demo",
+      "status": "applied",
+      "builderId": "claude",
+      "reviewerId": "luna",
+      "selfReview": false,
+      "rounds": 1,
+      "attempts": 1,
+      "worktree": null,
+      "proposal": {
+        "summary": "Added a formatJson helper and a --json branch in list."
+      },
+      "review": {
+        "verdict": "PASS",
+        "text": "PASS. Small and covered."
+      },
+      "exported": null,
+      "error": null,
+      "checks": []
+    },
+    "pin-schema": {
+      "id": "pin-schema",
+      "title": "Pin the JSON field names in a test",
+      "difficulty": "easy",
+      "owns": [
+        "test/format.test.js"
+      ],
+      "dependsOn": [
+        "format-json"
+      ],
+      "itemHash": "demo",
+      "status": "applied",
+      "builderId": "claude",
+      "reviewerId": "luna",
+      "selfReview": false,
+      "rounds": 1,
+      "attempts": 1,
+      "worktree": null,
+      "proposal": {
+        "summary": "Test pins the keys id, title, done."
+      },
+      "review": {
+        "verdict": "PASS",
+        "text": "PASS. Keys asserted exactly."
+      },
+      "exported": null,
+      "error": null,
+      "checks": []
+    },
+    "docs-json": {
+      "id": "docs-json",
+      "title": "Document the flag in the README",
+      "difficulty": "easy",
+      "owns": [
+        "README.md"
+      ],
+      "dependsOn": [
+        "format-json"
+      ],
+      "itemHash": "demo",
+      "status": "passed",
+      "builderId": "claude",
+      "reviewerId": "luna",
+      "selfReview": false,
+      "rounds": 1,
+      "attempts": 1,
+      "worktree": null,
+      "proposal": {
+        "summary": "README section with one example line."
+      },
+      "review": {
+        "verdict": "PASS",
+        "text": "PASS. Waiting for you to apply it."
+      },
+      "exported": null,
+      "error": null,
+      "checks": []
+    }
+  },
+  "messages": [
+    {
+      "id": "demo-build-m11",
+      "ts": "2026-10-01T09:20:01.000Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "Board",
+      "color": "#888888",
+      "agent": "system",
+      "round": 0,
+      "label": "",
+      "text": "Demo room, prerecorded. No agent ran to produce it."
+    },
+    {
+      "id": "demo-build-m12",
+      "ts": "2026-10-01T09:20:02.000Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "Board",
+      "color": "#888888",
+      "agent": "system",
+      "round": 0,
+      "label": "",
+      "text": "Roles: builder is Claude, reviewer is Luna."
+    },
+    {
+      "id": "demo-build-m13",
+      "ts": "2026-10-01T09:22:00.000Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#d97757",
+      "agent": "claude",
+      "round": 1,
+      "label": "format-json",
+      "text": "Added formatJson in src/format.js and wired --json in list."
+    },
+    {
+      "id": "demo-build-m14",
+      "ts": "2026-10-01T09:22:30.000Z",
+      "streaming": false,
+      "seatId": "luna",
+      "name": "Luna",
+      "color": "#6b8afd",
+      "agent": "codex",
+      "round": 1,
+      "label": "format-json review",
+      "text": "PASS. Small and covered."
+    },
+    {
+      "id": "demo-build-m15",
+      "ts": "2026-10-01T09:23:00.000Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "Board",
+      "color": "#888888",
+      "agent": "system",
+      "round": 0,
+      "label": "",
+      "text": "format-json applied."
+    },
+    {
+      "id": "demo-build-m16",
+      "ts": "2026-10-01T09:25:00.000Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#d97757",
+      "agent": "claude",
+      "round": 1,
+      "label": "pin-schema",
+      "text": "Added test/format.test.js with an exact key assertion."
+    },
+    {
+      "id": "demo-build-m17",
+      "ts": "2026-10-01T09:25:30.000Z",
+      "streaming": false,
+      "seatId": "luna",
+      "name": "Luna",
+      "color": "#6b8afd",
+      "agent": "codex",
+      "round": 1,
+      "label": "pin-schema review",
+      "text": "PASS. Keys asserted exactly."
+    },
+    {
+      "id": "demo-build-m18",
+      "ts": "2026-10-01T09:26:00.000Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "Board",
+      "color": "#888888",
+      "agent": "system",
+      "round": 0,
+      "label": "",
+      "text": "pin-schema applied."
+    },
+    {
+      "id": "demo-build-m19",
+      "ts": "2026-10-01T09:28:00.000Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#d97757",
+      "agent": "claude",
+      "round": 1,
+      "label": "docs-json",
+      "text": "Added a --json section to README.md."
+    },
+    {
+      "id": "demo-build-m20",
+      "ts": "2026-10-01T09:28:30.000Z",
+      "streaming": false,
+      "seatId": "luna",
+      "name": "Luna",
+      "color": "#6b8afd",
+      "agent": "codex",
+      "round": 1,
+      "label": "docs-json review",
+      "text": "PASS. Waiting for you to apply it."
+    },
+    {
+      "id": "demo-build-m21",
+      "ts": "2026-10-01T09:29:00.000Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "Board",
+      "color": "#888888",
+      "agent": "system",
+      "round": 0,
+      "label": "",
+      "text": "All items passed review. Apply them one at a time from the build view."
+    }
+  ]
+}

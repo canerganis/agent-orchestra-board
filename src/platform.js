@@ -23,12 +23,30 @@ if (WIN && !USER_SET_NO_CWD) process.env[NO_CWD_VAR] = '1';
 
 // The unelevated Windows sandbox cannot launch the Microsoft Store pwsh alias (CreateProcessAsUserW: access
 // denied), so Codex children get a PATH without WindowsApps and fall back to Windows PowerShell.
-function codexEnv() {
-  if (process.platform !== 'win32') return process.env;
-  const env = { ...process.env };
+function codexEnv(base = process.env) {
+  if (process.platform !== 'win32') return base;
+  const env = { ...base };
   const key = Object.keys(env).find((k) => k.toLowerCase() === 'path');
-  if (key) env[key] = env[key].split(';').filter((p) => !/\\WindowsApps\\?$/i.test(p)).join(';');
+  if (key && typeof env[key] === 'string') env[key] = env[key].split(';').filter((p) => !/\\WindowsApps\\?$/i.test(p)).join(';');
   return env;
+}
+
+// ---------- Codex file edits (off on every platform in v0.2) ----------
+
+// Flip only in a release, after the Codex write argv is pinned (-C <worktree>, writable_roots=[], no thread resume)
+// and real macOS and Linux write checks have passed (plan Q2). There is deliberately no env var, setting, flag or
+// constructor switch that overrides it: codexWriteSupport() reads this binding, not an exported property.
+const CODEX_UNIX_WRITES = false;
+const CODEX_WINDOWS_WRITE_REASON = 'off: Codex file edits are off in v0.2 on every platform. Codex seats read, review and propose patches that the board applies.';
+const CODEX_UNIX_WRITE_REASON = 'off in v0.2: Codex file edits return on macOS and Linux after the write check covers shell writes and has passed on real machines. Codex seats can still read, review and propose.';
+
+// Whether the board may ever give a Codex turn write access on `platform`: { ok, code, reason }. Fails closed.
+function codexWriteSupport(platform = process.platform) {
+  if (platform === 'win32') return { ok: false, code: 'codex-windows-unelevated', reason: CODEX_WINDOWS_WRITE_REASON };
+  if (platform === 'darwin' || platform === 'linux') {
+    return CODEX_UNIX_WRITES === true ? { ok: true, code: null, reason: null } : { ok: false, code: 'codex-writes-off', reason: CODEX_UNIX_WRITE_REASON };
+  }
+  return { ok: false, code: 'codex-platform-unsupported', reason: `off: Codex file edits are not supported on ${String(platform)}. Codex seats can still read, review and propose.` };
 }
 
 // ---------- binary resolution (mirrors what spawn() without a shell can actually run) ----------
@@ -135,4 +153,4 @@ function killTree(child) {
   }
 }
 
-module.exports = { codexEnv, killTree, resolveBin, resolveShims, resolveExe, spawnResolved, execFileResolved, isExecutableFile, NO_CWD_VAR };
+module.exports = { codexEnv, codexWriteSupport, CODEX_WINDOWS_WRITE_REASON, CODEX_UNIX_WRITES, killTree, resolveBin, resolveShims, resolveExe, spawnResolved, execFileResolved, isExecutableFile, NO_CWD_VAR };

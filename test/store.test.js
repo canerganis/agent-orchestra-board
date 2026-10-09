@@ -18,9 +18,10 @@ test('ensure: creates .orchestra/ with a .gitignore that lists `session`; an exi
     store.ensure();
     const gi = path.join(dir, '.orchestra', '.gitignore');
     assert.match(fs.readFileSync(gi, 'utf8'), /^session$/m);
+    assert.match(fs.readFileSync(gi, 'utf8'), /^worktrees\/$/m);
     fs.writeFileSync(gi, '# mine\nsession\nrooms/\n');
     store.ensure();
-    assert.equal(fs.readFileSync(gi, 'utf8'), '# mine\nsession\nrooms/\n');
+    assert.equal(fs.readFileSync(gi, 'utf8'), '# mine\nsession\nrooms/\nworktrees/\ncapability.json\n');
   } finally { rm(dir); }
 });
 

@@ -1,4 +1,4 @@
-// v0.1 extras on fake CLIs (port 4391): Claude Haiku 5.5 (listed, usage probe, warnings are never errors), per-session
+// v0.1 extras on fake CLIs: Claude Haiku 5.5 (listed, usage probe, warnings are never errors), per-session
 // model/effort overrides (New session modal -> room.overrides -> CLI args), and the capEffort setting (Debate rounds).
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -9,14 +9,13 @@ const { setupFakeCli } = require('./fake-cli');
 const claude = require('../src/adapters/claude');
 const { MODELS, CLAUDE_PROBE_MODEL, CLAUDE_CHEAP_MODEL } = require('../src/config');
 
-const PORT = 4391;
 const HAIKU = 'claude-haiku-5-5';
 let dir, project, fake, ctx;
 
 before(async () => {
   dir = tmpDir('ob-session-opts-'); project = path.join(dir, 'project'); fs.mkdirSync(project);
   fake = setupFakeCli(dir);
-  ctx = await startApp({ port: PORT, projectDir: project });
+  ctx = await startApp({ projectDir: project });
   for (const s of [
     { name: 'Ada', role: 'Architect', agent: 'claude', model: 'claude-sonnet-5-5', effort: 'high', perm: 'read' },
     { name: 'Bob', role: 'Reviewer', agent: 'codex', model: 'gpt-6-luna', effort: 'high', perm: 'read' },

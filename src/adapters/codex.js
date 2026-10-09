@@ -3,8 +3,14 @@ const { codexLean } = require('../config');
 const { shortCmd, clip } = require('../util');
 const { createFeeder } = require('./jsonl');
 
+// Codex's workspace-write sandbox also allows /tmp and $TMPDIR by default; a write turn excludes both.
+const WRITE_EXCLUDES = ['sandbox_workspace_write.exclude_tmpdir_env_var=true', 'sandbox_workspace_write.exclude_slash_tmp=true'];
+
 function buildArgs({ model, effort, mode = 'read', thread = null }) {
   const cfg = [...codexLean(), '-c', `model="${model}"`, '-c', `model_reasoning_effort="${effort}"`, '-c', `sandbox_mode="${mode === 'write' ? 'workspace-write' : 'read-only'}"`];
+  // Write turns: the sandbox's writable root is the cwd (the item worktree); no network access from inside it, and
+  // /tmp and $TMPDIR are not writable roots either (Codex adds both by default unless they are excluded).
+  if (mode === 'write') cfg.push('-c', 'sandbox_workspace_write.network_access=false', ...WRITE_EXCLUDES.flatMap((x) => ['-c', x]));
   if (process.platform === 'win32') cfg.push('-c', 'windows.sandbox="unelevated"');
   return thread ? ['exec', 'resume', thread, '--skip-git-repo-check', '--json', ...cfg, '-'] : ['exec', '--skip-git-repo-check', '--json', ...cfg, '-'];
 }
@@ -13,8 +19,23 @@ const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const errText = (e, fallback) => (typeof e === 'string' && e) || (isObj(e) && typeof e.message === 'string' && e.message) || (isObj(e) ? clip(e, 300) : '') || fallback;
 
+// A command as text: a string as it is, an argv array joined with spaces, anything else ''.
+const cmdText = (c) => (typeof c === 'string' ? c : Array.isArray(c) ? c.map(String).join(' ') : '');
+// The paths of a file_change item, read tolerantly: changes[].path, else paths[], else path.
+function changePaths(it) {
+  const out = [];
+  const add = (p) => { if (typeof p === 'string' && p) out.push(p); };
+  if (Array.isArray(it.changes)) for (const c of it.changes) add(isObj(c) ? c.path : c);
+  else if (Array.isArray(it.paths)) it.paths.forEach(add);
+  else add(it.path);
+  return out;
+}
+
 // handlers: thread(id), activity(text), delta(text), item(kind, text), usage({tokens,cached,cost}),
 //           rateLimit(info), completed({result}), error(message). All optional.
+// Tool log: toolUse({name: 'command_execution', command, exitCode, status, failed}) for a completed command
+// (failed when exit_code !== 0 or the status is failed) and toolUse({name: 'file_change', paths, status, failed})
+// for a completed file change (failed when the status is failed).
 // event(ev) returns false for an event type this adapter does not know (the feeder counts those).
 // `usage` is sent exactly once per turn.completed (zeros when the event carries no usage object; cost is always 0).
 function createParser(handlers = {}) {
@@ -29,9 +50,20 @@ function createParser(handlers = {}) {
         if (typeof it.text === 'string' && it.text) delta((emitted ? '\n\n' : '') + it.text);
         return;
       case 'reasoning': on('activity', 'thinking'); on('item', 'reasoning', it.text || it.summary || 'reasoning'); return;
-      case 'file_change': on('item', 'tool', 'file change'); return;
+      case 'command_execution': {
+        const exitCode = typeof it.exit_code === 'number' ? it.exit_code : null;
+        const status = typeof it.status === 'string' ? it.status : null;
+        on('toolUse', { name: 'command_execution', command: cmdText(it.command), exitCode, status, failed: exitCode !== 0 || status === 'failed' });
+        return;
+      }
+      case 'file_change': {
+        on('item', 'tool', 'file change');
+        const status = typeof it.status === 'string' ? it.status : null;
+        on('toolUse', { name: 'file_change', paths: changePaths(it), status, failed: status === 'failed' });
+        return;
+      }
       case 'error': { const m = errText(it.message, 'codex error'); if (!/ignoring|Under-development|clamping/i.test(m)) on('item', 'error', m); return; }
-      default: return; // command_execution (shown at start), mcp_tool_call, web_search, todo_list, ...
+      default: return; // mcp_tool_call, web_search, todo_list, ...
     }
   }
 
@@ -73,4 +105,4 @@ function createParser(handlers = {}) {
   return { feed: feeder.feed, end, stats: feeder.stats, event };
 }
 
-module.exports = { buildArgs, createParser };
+module.exports = { buildArgs, createParser, WRITE_EXCLUDES };

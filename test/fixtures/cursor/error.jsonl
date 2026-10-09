@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"C:\\proj","session_id":"c0ffee00-1111-4222-8333-444455558888","model":"auto","permissionMode":"default"}
+{"type":"result","subtype":"error","duration_ms":1000,"is_error":true,"result":"Usage limit reached for this plan","session_id":"c0ffee00-1111-4222-8333-444455558888"}

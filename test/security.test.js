@@ -1,4 +1,4 @@
-// Security gate on a live server (port 4391): Host allowlist, Origin allowlist, JSON-only POST, the per-project
+// Security gate on a live server: Host allowlist, Origin allowlist, JSON-only POST, the per-project
 // session token (persisted in .orchestra/session) and its cookie, static file confinement, body limits, security
 // headers, API validation. No CLI runs.
 const { test, before, after } = require('node:test');
@@ -6,7 +6,7 @@ const assert = require('node:assert/strict');
 const net = require('net');
 const { tmpDir, startApp, request, sse, teardown } = require('./helpers');
 
-let PORT = 4391; // preferred; the real one comes from startApp (falls back inside 4390-4399 when busy)
+let PORT = 0; // the real port comes from startApp (OS assigned), set in before()
 let dir, ctx;
 
 before(async () => {
@@ -14,7 +14,7 @@ before(async () => {
   process.env.ORCHESTRA_CLAUDE_BIN = 'fake-claude-not-installed';
   process.env.ORCHESTRA_CODEX_BIN = 'fake-codex-not-installed';
   dir = tmpDir('ob-security-');
-  ctx = await startApp({ port: PORT, projectDir: dir });
+  ctx = await startApp({ projectDir: dir });
   PORT = ctx.port;
 });
 after(() => teardown(ctx, dir));
@@ -55,7 +55,7 @@ test('with the cookie: / is the app, /api/state has the documented shape, /api/d
   assert.equal(home.status, 200); assert.match(home.headers['content-type'], /text\/html/); assert.match(home.text, /<!doctype html>/i);
   const st = await ctx.get('/api/state');
   assert.equal(st.status, 200);
-  assert.deepEqual(Object.keys(st.json).sort(), ['efforts', 'limits', 'models', 'naive', 'project', 'rooms', 'seats', 'settings']);
+  assert.deepEqual(Object.keys(st.json).sort(), ['apiVersion', 'capability', 'efforts', 'engines', 'limits', 'models', 'naive', 'project', 'roomIndex', 'rooms', 'seats', 'settings', 'watch']);
   assert.equal(st.json.settings.lang, 'English');
   assert.ok(Array.isArray(st.json.seats) && st.json.seats.length >= 1);
   for (const s of st.json.seats) assert.ok(['idle', 'working', 'error'].includes(s.status) && 'activity' in s && 'roomId' in s);

@@ -42,6 +42,9 @@ const CLAUDE_TOOLS = { none: [''], read: ['Read', 'Grep', 'Glob'], write: ['Read
 const CLAUDE_CHEAP_MODEL = 'claude-haiku-5-5';
 const CLAUDE_PROBE_MODEL = CLAUDE_CHEAP_MODEL;
 const CLAUDE_PROBE_FALLBACK_MODEL = 'claude-haiku-4-5-20251001';
+// The cheap Codex model doctor --containment runs at low effort. Provisional (plan Q4): no real run has confirmed it is
+// the cheapest model that still follows the check prompt. It must stay in MODELS.codex.
+const CODEX_CHEAP_MODEL = 'gpt-6-luna';
 
 // CLI executables; overridable so tests can point at fake CLIs.
 const claudeBin = () => process.env.ORCHESTRA_CLAUDE_BIN || 'claude';
@@ -93,7 +96,7 @@ const defaultSeats = () => DEFAULT_SEATS.map((s) => ({ perm: 'read', target: '',
 
 module.exports = {
   DEFAULT_PORT, MODELS, EFFORTS, COLORS, DEFAULT_SEATS, PERSISTED,
-  CODEX_LEAN, CLAUDE_LEAN, CLAUDE_ISOLATION, CODEX_ISOLATION, CLAUDE_TOKEN, CODEX_TOKEN, CLAUDE_TOOLS, CLAUDE_PROBE_MODEL, CLAUDE_PROBE_FALLBACK_MODEL, CLAUDE_CHEAP_MODEL,
+  CODEX_LEAN, CLAUDE_LEAN, CLAUDE_ISOLATION, CODEX_ISOLATION, CLAUDE_TOKEN, CODEX_TOKEN, CLAUDE_TOOLS, CLAUDE_PROBE_MODEL, CLAUDE_PROBE_FALLBACK_MODEL, CLAUDE_CHEAP_MODEL, CODEX_CHEAP_MODEL,
   claudeBin, codexBin, defaultSettings, defaultSeats,
   naive, claudeLean, codexLean, RETRY_DELAYS_MS, retryDelays, IDLE_MINUTES, idleTimeoutMs,
 };

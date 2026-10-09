@@ -36,7 +36,9 @@ function launch(args, env = ENV) {
   child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
   child.once('exit', () => { exited = true; });
   const ready = waitFor(() => {
-    if (/EADDRINUSE/.test(out) || (exited && !/http:\/\/localhost:/.test(out))) throw Object.assign(new Error('board did not start: ' + out), { code: /EADDRINUSE/.test(out) ? 'EADDRINUSE' : 'EXIT' });
+    // The CLI words a taken port as "port N is already in use" (which itself contains an http://localhost: URL).
+    const conflict = /EADDRINUSE|is already in use/.test(out);
+    if (conflict || (exited && !/http:\/\/localhost:\d+\/\?t=/.test(out))) throw Object.assign(new Error('board did not start: ' + out), { code: conflict ? 'EADDRINUSE' : 'EXIT' });
     const m = out.match(/http:\/\/localhost:(\d+)\/\S*/);
     return m && { url: m[0], port: Number(m[1]), token: (m[0].match(/[?&]t=([\w-]+)/) || [])[1] || null };
   }, { timeout: 15000, what: 'board start banner: ' + out });
@@ -78,6 +80,24 @@ test('legacy launch `node server.js <project> <port>`: serves the board on 127.0
     assert.match(fs.readFileSync(path.join(project, '.orchestra', '.gitignore'), 'utf8'), /^session$/m, '.orchestra/.gitignore keeps the session token out of git');
     assert.equal((await request(port, 'GET', '/api/state', { host: 'evil.example' })).status, 403);
   } finally { await kill(b.child); rmrf(project); }
+});
+
+test('launchOnFreePort retries on another port when the first candidate is held (real CLI children)', { timeout: 45000 }, async () => {
+  const project = tmpDir('ob-cli-');
+  const held = require('net').createServer();
+  await new Promise((r) => held.listen(0, '127.0.0.1', r));
+  const heldPort = held.address().port;
+  try {
+    // A child asked for the held port must report a conflict, not hang or look started.
+    await assert.rejects(launch(['bin/agent-orchestra-board.js', project, '--port', String(heldPort)]), (e) => e.code === 'EADDRINUSE');
+    // The retry loop moves on: the first candidate is forced to the held port via a stubbed freePort sequence.
+    const seen = [];
+    const b = await launchOnFreePort(4395, (port) => { seen.push(port); return ['bin/agent-orchestra-board.js', project, '--port', String(seen.length === 1 ? heldPort : port)]; });
+    try {
+      assert.ok(seen.length >= 2, 'first attempt hit the held port and was retried');
+      assert.notEqual(b.port, heldPort);
+    } finally { await kill(b.child); }
+  } finally { await new Promise((r) => held.close(r)); rmrf(project); }
 });
 
 test('`orchestra-board <project> --port <n>` wins over $PORT; the board binds only 127.0.0.1', { timeout: 30000 }, async () => {
@@ -124,4 +144,42 @@ test('`orchestra-board --help` prints usage and exits 0', () => {
   assert.equal(r.status, 0);
   assert.match(r.stdout, /Usage: agent-orchestra-board \[projectDir\] \[--port <n>\] \[--open\]/);
   assert.match(r.stdout, /orchestra-board doctor/);
+  assert.match(r.stdout, /doctor --containment \[--yes\] \[--json\]/);
+});
+
+test('parseArgs: --containment and --yes belong to doctor, and --yes needs --containment', () => {
+  const a = parseArgs(['doctor', '--containment', '--yes', '--json']);
+  assert.deepEqual([a.cmd, a.containment, a.yes, a.json], ['doctor', true, true, true]);
+  assert.deepEqual([parseArgs(['doctor']).containment, parseArgs(['doctor']).yes], [false, false]);
+  for (const argv of [['--containment'], ['--yes'], ['proj', '--containment', '--yes'], ['doctor', '--yes']]) {
+    assert.throws(() => parseArgs(argv), (e) => e.exitCode === 2 && /works only with doctor/.test(e.message), argv.join(' '));
+  }
+});
+
+// The containment check must never start under CI, and without --yes it only prints its plan. Neither case may create
+// anything in the temp dir (TMP/TEMP/TMPDIR point at an empty one).
+test('`orchestra-board doctor --containment`: the plan without --yes (exit 2), a refusal under CI (exit 2), nothing created', { timeout: 30000 }, () => {
+  const tmp = tmpDir('ob-cli-tmp-');
+  try {
+    const base = { ...ENV, TMP: tmp, TEMP: tmp, TMPDIR: tmp };
+    delete base.CI; delete base.GITHUB_ACTIONS;
+    const r = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', 'doctor', '--containment'], { cwd: ROOT, env: base, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    assert.equal(r.status, 2, r.stdout + r.stderr);
+    assert.match(r.stdout, /claude-haiku-5-5/); assert.match(r.stdout, /gpt-6-luna/);
+    assert.match(r.stdout, /a few cents, your project is not touched/);
+    assert.match(r.stdout, /Add --yes to run it\./);
+    for (const ci of [{ CI: '1' }, { GITHUB_ACTIONS: 'true' }]) {
+      const c = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', 'doctor', '--containment', '--yes'], { cwd: ROOT, env: { ...base, ...ci }, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+      assert.equal(c.status, 2, c.stdout + c.stderr);
+      assert.match(c.stderr, /never runs under CI/);
+      assert.doesNotMatch(c.stdout, /claude-haiku/, 'nothing is planned under CI');
+    }
+    const j = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', 'doctor', '--containment', '--json'], { cwd: ROOT, env: base, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    assert.equal(j.status, 2);
+    const json = JSON.parse(j.stdout);
+    assert.equal(json.refused, 'unconfirmed'); assert.ok(json.plan.some((l) => /gpt-6-luna/.test(l)));
+    assert.deepEqual(fs.readdirSync(tmp), [], 'the temp dir stays empty');
+    const bad = spawnSync(process.execPath, ['bin/agent-orchestra-board.js', '--containment'], { cwd: ROOT, env: base, encoding: 'utf8', windowsHide: true, timeout: 25000 });
+    assert.equal(bad.status, 2); assert.match(bad.stderr, /--containment works only with doctor/);
+  } finally { rmrf(tmp); }
 });

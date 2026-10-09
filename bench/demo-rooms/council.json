@@ -1,0 +1,118 @@
+{
+  "id": "demo-council",
+  "kind": "meeting",
+  "title": "Should the CLI keep a JSON output flag?",
+  "status": "done",
+  "created": "2026-10-01T09:00:00.000Z",
+  "round": "synthesis",
+  "topic": "Should the tiny \"taskly\" CLI keep a --json output flag, or print only human text?",
+  "seatIds": [
+    "claude",
+    "luna",
+    "sol"
+  ],
+  "rounds": 2,
+  "synthId": "sol",
+  "scoutId": null,
+  "withContext": false,
+  "overrides": {},
+  "messages": [
+    {
+      "id": "demo-council-m1",
+      "ts": "2026-10-01T09:00:01.000Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "Board",
+      "color": "#888888",
+      "agent": "system",
+      "round": 0,
+      "label": "",
+      "text": "Demo room, prerecorded. No agent ran to produce it."
+    },
+    {
+      "id": "demo-council-m2",
+      "ts": "2026-10-01T09:00:20.000Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#d97757",
+      "agent": "claude",
+      "round": 1,
+      "label": "",
+      "text": "Keep it. Scripts pipe taskly into jq, and parsing human text breaks the first time a title contains a colon. The flag costs about ten lines in src/format.js."
+    },
+    {
+      "id": "demo-council-m3",
+      "ts": "2026-10-01T09:00:22.000Z",
+      "streaming": false,
+      "seatId": "luna",
+      "name": "Luna",
+      "color": "#6b8afd",
+      "agent": "codex",
+      "round": 1,
+      "label": "",
+      "text": "Keep it, but freeze the schema now: id, title, done. Once users depend on field names, every rename is a breaking change."
+    },
+    {
+      "id": "demo-council-m4",
+      "ts": "2026-10-01T09:00:25.000Z",
+      "streaming": false,
+      "seatId": "sol",
+      "name": "Sol",
+      "color": "#3fb68b",
+      "agent": "codex",
+      "round": 1,
+      "label": "",
+      "text": "Keep it. Add a schemaVersion field so we can evolve without guessing what a consumer expects."
+    },
+    {
+      "id": "demo-council-m5",
+      "ts": "2026-10-01T09:01:10.000Z",
+      "streaming": false,
+      "seatId": "claude",
+      "name": "Claude",
+      "color": "#d97757",
+      "agent": "claude",
+      "round": 2,
+      "label": "",
+      "text": "I agree with Luna on freezing fields. A schemaVersion on every line is noise for one-shot scripts, so put it only in the --json --verbose form."
+    },
+    {
+      "id": "demo-council-m6",
+      "ts": "2026-10-01T09:01:14.000Z",
+      "streaming": false,
+      "seatId": "luna",
+      "name": "Luna",
+      "color": "#6b8afd",
+      "agent": "codex",
+      "round": 2,
+      "label": "",
+      "text": "Fine with that. STANCE: CONVERGED"
+    },
+    {
+      "id": "demo-council-m7",
+      "ts": "2026-10-01T09:01:18.000Z",
+      "streaming": false,
+      "seatId": "sol",
+      "name": "Sol",
+      "color": "#3fb68b",
+      "agent": "codex",
+      "round": 2,
+      "label": "",
+      "text": "Accepted. STANCE: CONVERGED"
+    },
+    {
+      "id": "demo-council-m8",
+      "ts": "2026-10-01T09:02:00.000Z",
+      "streaming": false,
+      "seatId": "sol",
+      "name": "Sol",
+      "color": "#3fb68b",
+      "agent": "codex",
+      "round": "synthesis",
+      "label": "Synthesis",
+      "text": "Decision: keep --json.\n\n1. Output is one JSON object per task: id, title, done.\n2. The field names are frozen for 0.x. Renames need a major bump.\n3. schemaVersion appears only with --json --verbose.\n4. Add a test in test/format.test.js that pins the field names.\n\nOpen question: none. All three seats converged in round 2."
+    }
+  ],
+  "resultId": "demo-council-m8"
+}

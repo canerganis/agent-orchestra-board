@@ -1,0 +1,13 @@
+{"type":"launched"}
+{"type":"started","key":"build:I1:haiku","agentId":"a3f9c2e1b7d4a8e6","label":"build:I1:haiku","phase":"Build"}
+{"type":"started","key":"build:I2:sonnet","agentId":"a7c1e9b3d5f2a4c6","label":"build:I2:sonnet","phase":"Build"}
+{"type":"started","key":"build:I3:haiku","agentId":"a2b4d6f8a0c2e4b6","label":"build:I3:haiku","phase":"Build"}
+{"type":"result","key":"build:I1:haiku","agentId":"a3f9c2e1b7d4a8e6","result":"CANARY_RESULT_STRING_5f6a"}
+{"type":"started","key":"build:I3:haiku","agentId":"a6f0e3c5a7b9d1f3","label":"build:I3:haiku","phase":"Build"}
+{"type":"failed","key":"review:I3:opus","agentId":""}
+{"type":"result","key":"build:I2:sonnet","agentId":"a7c1e9b3d5f2a4c6","result":{"verdict":"CANARY_RESULT_OBJECT_7b8c","items":["CANARY_RESULT_ITEM_1d2e"]}}
+{"type":"started","key":"review:I1:opus","agentId":"a5d2f8e4c1b9a3f7","label":"review:I1:opus","phase":"Review"}
+{"type":"started","key":"review:I2:sonnet","agentId":"a9e6b2d8f4c0a1e3","label":"review:I2:sonnet","phase":"Review"}
+{"type":"result","key":"build:I3:haiku","agentId":"a6f0e3c5a7b9d1f3","result":"CANARY_RESULT_RETRY_2d3e"}
+{"type":"result","key":"review:I1:opus","agentId":"a5d2f8e4c1b9a3f7","result":{"verdict":"CANARY_RESULT_REVIEW_4f5a"}}
+{"type":"result","key":"review:I2:sonnet","agentId":"a9e6b2d8f4c0a1e3","result":"CANARY_RESULT_REVIEW2_6b7c"}

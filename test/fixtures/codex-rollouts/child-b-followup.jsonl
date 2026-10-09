@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-07T21:05:00.000Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-b-2","started_at":1791407100,"model_context_window":200000}}
+{"timestamp":"2026-10-07T21:05:30.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":800,"cached_input_tokens":300,"cache_write_input_tokens":0,"output_tokens":60,"reasoning_output_tokens":0,"total_tokens":1160}},"rate_limits":null}}

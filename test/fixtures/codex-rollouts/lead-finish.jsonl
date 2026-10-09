@@ -1,0 +1,2 @@
+{"timestamp":"2026-10-07T21:02:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"cached_input_tokens":150,"cache_write_input_tokens":0,"output_tokens":70,"reasoning_output_tokens":0,"total_tokens":970}},"rate_limits":null}}
+{"timestamp":"2026-10-07T21:02:10.000Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-lead-1","last_agent_message":"CANARY_last_agent_message","started_at":1791406801,"completed_at":1791406930,"duration_ms":129000}}

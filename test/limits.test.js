@@ -8,6 +8,8 @@ const path = require('path');
 const { tmpDir, rmrf } = require('./helpers');
 const { createStore } = require('../src/store');
 const { createLimits } = require('../src/limits');
+// Windows without their freshness fields, for the shape assertions of the older tests.
+const bare = (wins) => wins; // windows keep their plain shape; freshness lives in lim.observed / lim.stale
 
 let dir, home, store, events, limits;
 const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CODEX_HOME: process.env.CODEX_HOME };
@@ -38,19 +40,20 @@ test('initial state: no limits known, nothing persisted', () => {
 test('claudeLimits: unifiedWindows become {pct (one decimal), resetsAt in ms}; status/overage kept; persisted + broadcast', () => {
   limits.claudeLimits({ status: 'allowed', isUsingOverage: false, rateLimitType: 'five_hour', utilization: 0.42, resetsAt: 1759900000, unifiedWindows: { five_hour: { utilization: 0.4267, resetsAt: 1759900000 }, seven_day: { utilization: 0.11, resetsAt: 1760300000 }, broken: { utilization: 'n/a' } } });
   const c = limits.get().claude;
-  assert.deepEqual(c.windows, { five_hour: { pct: 42.7, resetsAt: 1759900000000 }, seven_day: { pct: 11, resetsAt: 1760300000000 } });
+  assert.deepEqual(bare(c.windows), { five_hour: { pct: 42.7, resetsAt: 1759900000000 }, seven_day: { pct: 11, resetsAt: 1760300000000 } });
   assert.equal(c.status, 'allowed'); assert.equal(c.overage, false);
   assert.match(c.updated, /^\d{4}-\d{2}-\d{2}T/);
-  assert.deepEqual(store.readJson('limits.json').claude.windows, c.windows);
+  assert.deepEqual(bare(store.readJson('limits.json').claude.windows), bare(c.windows));
   assert.equal(events.filter((e) => e.t === 'limits').length, 1);
   assert.deepEqual(events.at(-1).limits.claude.windows, c.windows);
+  assert.equal(typeof c.observed.five_hour, 'number');
 });
 
 test('claudeLimits: without unifiedWindows the single rateLimitType window is used; overage flag is boolean', () => {
   limits.claudeLimits({ status: 'allowed_warning', rateLimitType: 'seven_day', utilization: 0.905, resetsAt: 7, isUsingOverage: 1 });
   const c = limits.get().claude;
   // A partial event updates its own window and keeps the windows already known (here five_hour from the test above).
-  assert.deepEqual(c.windows.seven_day, { pct: 90.5, resetsAt: 7000 });
+  assert.deepEqual(bare({ s: c.windows.seven_day }).s, { pct: 90.5, resetsAt: 7000 });
   assert.ok(c.windows.five_hour, 'known five_hour window is kept');
   assert.equal(c.status, 'allowed_warning'); assert.equal(c.overage, true);
 });
@@ -74,7 +77,7 @@ test('readCodexLimits: no sessions dir -> nothing; newest day dir + newest .json
   const n = events.length;
   limits.refreshCodex();
   const c = limits.get().codex;
-  assert.deepEqual(c.windows, {
+  assert.deepEqual(bare(c.windows), {
     five_hour: { pct: 33, minutes: 300, resetsAt: 1759910000000 },
     seven_day: { pct: 61, minutes: 10080, resetsAt: 1760400000000 },
   });
@@ -83,7 +86,7 @@ test('readCodexLimits: no sessions dir -> nothing; newest day dir + newest .json
   // Same file, same mtime: nothing new to report.
   limits.refreshCodex();
   assert.equal(events.length, n + 1);
-  assert.deepEqual(store.readJson('limits.json').codex.windows, c.windows);
+  assert.deepEqual(bare(store.readJson('limits.json').codex.windows), bare(c.windows));
 });
 
 test('readCodexLimits: a newer rollout file (by mtime) replaces the windows; odd window sizes get a "<n>m" key', async () => {
@@ -93,7 +96,7 @@ test('readCodexLimits: a newer rollout file (by mtime) replaces the windows; odd
   const future = Date.now() / 1000 + 60; fs.utimesSync(f, future, future);
   limits.refreshCodex();
   const c = limits.get().codex;
-  assert.deepEqual(c.windows, { '60m': { pct: 77, minutes: 60, resetsAt: 1000 } });
+  assert.deepEqual(bare(c.windows), { '60m': { pct: 77, minutes: 60, resetsAt: 1000 } });
   assert.equal(c.plan, 'plus'); assert.equal(c.reached, 'primary');
 });
 
@@ -105,6 +108,63 @@ test('start/stop: polling timer is created once and cleared; start() does an imm
 
 test('limits.json on disk is reloaded by a fresh instance', () => {
   const again = createLimits({ store, broadcast: () => {} });
-  assert.deepEqual(again.get().claude.windows, limits.get().claude.windows);
-  assert.deepEqual(again.get().codex.windows, limits.get().codex.windows);
+  assert.deepEqual(bare(again.get().claude.windows), bare(limits.get().claude.windows));
+  assert.deepEqual(bare(again.get().codex.windows), bare(limits.get().codex.windows));
+});
+
+// ---- freshness ----
+const fresh = (clockRef, extra = {}) => {
+  const d = tmpDir('ob-limits-fresh-'); const st = createStore(path.join(d, 'p')); st.ensure();
+  return { d, lim: createLimits({ store: st, broadcast: () => {}, clock: () => clockRef.t, ...extra }) };
+};
+
+test('freshness: a reading taken before a reset is stale after the reset time; also after 30 minutes', () => {
+  const clk = { t: 1_000_000_000_000 };
+  const { d, lim } = fresh(clk);
+  lim.claudeLimits({ status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.5, resetsAt: (clk.t + 3600e3) / 1000 }, seven_day: { utilization: 0.92, resetsAt: (clk.t + 10 * 60e3) / 1000 } } });
+  assert.equal(lim.get().claude.stale.seven_day, false);
+  clk.t += 11 * 60e3; // past the weekly reset, within 30 minutes
+  assert.equal(lim.get().claude.stale.seven_day, true);
+  assert.equal(lim.get().claude.stale.five_hour, false);
+  clk.t += 25 * 60e3; // over the freshness limit
+  assert.equal(lim.get().claude.stale.five_hour, true);
+  rmrf(d);
+});
+
+test('freshness: a provider refresh without new window data does not refresh old windows', () => {
+  const clk = { t: 1_000_000_000_000 };
+  const { d, lim } = fresh(clk);
+  lim.claudeLimits({ status: 'allowed', unifiedWindows: { five_hour: { utilization: 0.1, resetsAt: (clk.t + 5 * 3600e3) / 1000 }, seven_day: { utilization: 0.9, resetsAt: (clk.t + 9 * 3600e3) / 1000 } } });
+  const seen = lim.get().claude.observed.seven_day;
+  clk.t += 40 * 60e3;
+  lim.claudeLimits({ status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.2, resetsAt: (clk.t + 3600e3) / 1000 }); // one window only
+  const c = lim.get().claude;
+  assert.equal(c.observed.seven_day, seen);
+  assert.equal(c.stale.seven_day, true);
+  assert.equal(c.stale.five_hour, false);
+  lim.claudeLimits({ status: 'allowed' }); // status only: no window touched
+  assert.equal(lim.get().claude.observed.seven_day, seen);
+  rmrf(d);
+});
+
+test('freshness: a Codex event timestamp wins over the file mtime; an older event never replaces a newer reading', () => {
+  const clk = { t: Date.parse('2026-10-08T12:00:00Z') };
+  const { d, lim } = fresh(clk);
+  const prevHome = process.env.CODEX_HOME; process.env.CODEX_HOME = path.join(d, 'codex');
+  try {
+    const f = path.join(d, 'codex', 'sessions', '2026', '10', '08', 'rollout-a.jsonl');
+    const ev = (ts, pct) => ({ timestamp: ts, type: 'event_msg', payload: { rate_limits: { primary: { used_percent: pct, window_minutes: 300, resets_at: Date.parse('2026-10-08T15:00:00Z') / 1000 }, plan_type: 'pro' } } });
+    rollout(f, [ev('2026-10-08T11:50:00Z', 30)]);
+    const later = Date.now() / 1000 + 600; fs.utimesSync(f, later, later); // mtime is far from the event time
+    lim.refreshCodex();
+    assert.equal(lim.get().codex.observed.five_hour, Date.parse('2026-10-08T11:50:00Z'));
+    assert.equal(lim.get().codex.stale.five_hour, false);
+    // A rewritten rollout whose last event is older than the reading already held is ignored.
+    rollout(f, [ev('2026-10-08T09:00:00Z', 99)]);
+    fs.utimesSync(f, later + 5, later + 5);
+    lim.refreshCodex();
+    assert.equal(lim.get().codex.windows.five_hour.pct, 30);
+    clk.t = Date.parse('2026-10-08T15:01:00Z'); // after the reset
+    assert.equal(lim.get().codex.stale.five_hour, true);
+  } finally { if (prevHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = prevHome; rmrf(d); }
 });

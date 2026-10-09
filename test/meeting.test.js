@@ -1,4 +1,4 @@
-// Debate workflow end-to-end on a temp project with fake CLIs (port 4392): scout brief, parallel round 1,
+// Debate workflow end-to-end on a temp project with fake CLIs: scout brief, parallel round 1,
 // unseen-only discussion rounds, user notes, STANCE: CONVERGED early stop, silent agreement, synthesis to BRAINSTORM.md.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -8,13 +8,12 @@ const { tmpDir, waitFor, startApp, testWithFake, samePath, teardown } = require(
 const { setupFakeCli } = require('./fake-cli');
 const { today } = require('../src/util');
 
-const PORT = 4392;
 let dir, project, fake, ctx;
 
 before(async () => {
   dir = tmpDir('ob-meeting-'); project = path.join(dir, 'project'); fs.mkdirSync(project);
   fake = setupFakeCli(dir);
-  ctx = await startApp({ port: PORT, projectDir: project });
+  ctx = await startApp({ projectDir: project });
   for (const s of [
     { name: 'Scout', role: 'Scout', agent: 'claude', model: 'claude-sonnet-5-5', effort: 'low', perm: 'read' },
     { name: 'Ada', role: 'Architect', agent: 'claude', model: 'claude-opus-5-5', effort: 'high', perm: 'read' },

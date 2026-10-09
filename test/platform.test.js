@@ -40,3 +40,46 @@ for (const platform of ['linux', 'darwin']) {
     assert.throws(() => denied.killTree({ pid: 12345 }), { code: 'EPERM' });
   });
 }
+
+// Codex file edits are off on every platform in v0.2; the reasons and codes are part of the gate's contract.
+test('codexWriteSupport: off on win32 (unelevated sandbox), darwin and linux (writes off), unsupported elsewhere', () => {
+  const p = require('../src/platform');
+  assert.equal(p.CODEX_UNIX_WRITES, false);
+  const win = p.codexWriteSupport('win32');
+  assert.deepEqual(win, { ok: false, code: 'codex-windows-unelevated', reason: p.CODEX_WINDOWS_WRITE_REASON });
+  assert.match(p.CODEX_WINDOWS_WRITE_REASON, /^off: Codex file edits are off in v0.2 on every platform. Codex seats read, review and propose patches that the board applies.$/);
+  for (const plat of ['darwin', 'linux']) {
+    const r = p.codexWriteSupport(plat);
+    assert.equal(r.ok, false, plat);
+    assert.equal(r.code, 'codex-writes-off', plat);
+    assert.match(r.reason, /^off in v0\.2: Codex file edits return on macOS and Linux after the write check covers shell writes and has passed on real machines\. Codex seats can still read, review and propose\.$/);
+  }
+  for (const other of ['freebsd', 'aix', 'sunos', '', null]) {
+    const r = p.codexWriteSupport(other);
+    assert.equal(r.ok, false); assert.equal(r.code, 'codex-platform-unsupported');
+  }
+  // The exported flag is a copy: changing it does not turn Codex writes on.
+  const saved = p.CODEX_UNIX_WRITES;
+  try { p.CODEX_UNIX_WRITES = true; assert.equal(p.codexWriteSupport('linux').ok, false); } finally { p.CODEX_UNIX_WRITES = saved; }
+  const dashes = new RegExp('[\u2013\u2014]');
+  for (const plat of ['win32', 'darwin', 'linux', 'freebsd']) assert.doesNotMatch(p.codexWriteSupport(plat).reason, dashes);
+});
+
+test('codexEnv(base) reads base: on Windows it drops WindowsApps from PATH without touching base; elsewhere it returns base', () => {
+  const base = { Path: 'C:\\a;C:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps;C:\\b;C:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\', FOO: '1' };
+  const win = posixPlatform('win32', () => {});
+  const env = win.codexEnv(base);
+  assert.equal(env.Path, 'C:\\a;C:\\b');
+  assert.equal(env.FOO, '1');
+  assert.notEqual(env, base);
+  assert.match(base.Path, /WindowsApps/, 'base is not modified');
+  assert.equal(JSON.stringify(win.codexEnv({ FOO: '2' })), '{"FOO":"2"}', 'no PATH at all'); // a vm-realm object: compared as JSON
+  for (const plat of ['linux', 'darwin']) {
+    const api = posixPlatform(plat, () => {});
+    assert.equal(api.codexEnv(base), base);
+    assert.equal(api.codexWriteSupport(plat).code, 'codex-writes-off');
+  }
+  // The real module on this machine reads the given base too.
+  const real = require('../src/platform').codexEnv({ PATH: 'x', BAR: 'y' });
+  assert.equal(real.BAR, 'y');
+});

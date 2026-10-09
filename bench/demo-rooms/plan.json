@@ -1,0 +1,86 @@
+{
+  "id": "demo-plan",
+  "kind": "plan",
+  "title": "Add --json to taskly",
+  "status": "done",
+  "created": "2026-10-01T09:10:00.000Z",
+  "round": 0,
+  "goal": "Add a frozen --json output to the taskly CLI",
+  "planRevision": 1,
+  "planHash": "0000000000000000000000000000000000000000000000000000000000000001",
+  "plan": {
+    "goal": "Add a frozen --json output to the taskly CLI",
+    "items": [
+      {
+        "id": "format-json",
+        "title": "Add --json output to list",
+        "difficulty": "easy",
+        "owns": [
+          "src/format.js"
+        ],
+        "dependsOn": [],
+        "spec": "Print one JSON object per task with id, title, done when --json is passed.",
+        "checks": []
+      },
+      {
+        "id": "pin-schema",
+        "title": "Pin the JSON field names in a test",
+        "difficulty": "easy",
+        "owns": [
+          "test/format.test.js"
+        ],
+        "dependsOn": [
+          "format-json"
+        ],
+        "spec": "Add a node:test that asserts the exact keys of a --json line.",
+        "checks": []
+      },
+      {
+        "id": "docs-json",
+        "title": "Document the flag in the README",
+        "difficulty": "easy",
+        "owns": [
+          "README.md"
+        ],
+        "dependsOn": [
+          "format-json"
+        ],
+        "spec": "Add a short --json section with one example line.",
+        "checks": []
+      }
+    ]
+  },
+  "approval": {
+    "decision": "approved",
+    "hash": "0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  "buildIds": [
+    "demo-build"
+  ],
+  "messages": [
+    {
+      "id": "demo-plan-m9",
+      "ts": "2026-10-01T09:10:01.000Z",
+      "streaming": false,
+      "seatId": "system",
+      "name": "Board",
+      "color": "#888888",
+      "agent": "system",
+      "round": 0,
+      "label": "",
+      "text": "Demo room, prerecorded. No agent ran to produce it."
+    },
+    {
+      "id": "demo-plan-m10",
+      "ts": "2026-10-01T09:10:40.000Z",
+      "streaming": false,
+      "seatId": "sol",
+      "name": "Sol",
+      "color": "#3fb68b",
+      "agent": "codex",
+      "round": 1,
+      "label": "Plan",
+      "text": "Three small items. format-json first, then the test and the docs in any order."
+    }
+  ]
+}
