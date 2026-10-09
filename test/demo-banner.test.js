@@ -36,7 +36,7 @@ test('recordedAtOf reads the first valid recordedAt from the room files, null wh
 test('record-demo refuses without OB_REAL=1 and starts nothing', () => {
   for (const v of [undefined, '', '0', 'true']) {
     const env = { ...process.env };
-    delete env.OB_REAL;
+    delete env.OB_REAL; delete env.CI; delete env.GITHUB_ACTIONS; // the CI refusal comes first and is covered elsewhere
     if (v !== undefined) env.OB_REAL = v;
     const r = cp.spawnSync(process.execPath, [SCRIPT], { env, encoding: 'utf8', timeout: 20000 });
     assert.equal(r.status, 2, `OB_REAL=${v}`);
