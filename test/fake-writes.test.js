@@ -48,9 +48,11 @@ test('writeFiles and deleteFiles change files and log every operation', () => {
     assert.equal(writes.length, 3);
     assert.ok(writes.every((w) => w.ok === true && w.error === null && w.n === 1));
     assert.deepEqual(writes.map((w) => w.op), ['write', 'write', 'delete']);
-    assert.equal(writes[0].path, path.resolve(cwd, 'a', 'b.txt'));
-    assert.equal(writes[1].path, abs);
-    assert.equal(writes[2].path, path.resolve(cwd, 'gone.txt'));
+    // Compare through the real parent folder: on macOS the temp dir /var/... is a link to /private/var/...
+    const real = (p) => path.join(fs.realpathSync.native(path.dirname(p)), path.basename(p));
+    assert.equal(real(writes[0].path), real(path.resolve(cwd, 'a', 'b.txt')));
+    assert.equal(real(writes[1].path), real(abs));
+    assert.equal(real(writes[2].path), real(path.resolve(cwd, 'gone.txt')));
   } finally {
     rm(root);
     rm(outside);
