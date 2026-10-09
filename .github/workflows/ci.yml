@@ -46,7 +46,18 @@ jobs:
         run: node docs/measurements/2026-10-07/summarize.mjs > /dev/null
 
       - name: Unit tests
-        run: npm test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee "$RUNNER_TEMP/unit-tests.log"
+
+      - name: Report failing tests
+        if: failure()
+        shell: bash
+        run: |
+          # Annotations are visible without signing in, unlike the raw log.
+          grep -E '^✖|AssertionError|Error:' "$RUNNER_TEMP/unit-tests.log" | sort -u | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+          tail -n 40 "$RUNNER_TEMP/unit-tests.log" | while IFS= read -r l; do echo "::notice::$l"; done
 
       - name: Smoke test the server
         shell: bash
